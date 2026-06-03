@@ -1,0 +1,19 @@
+{
+  "name": "Складская система",
+  "short_name": "Склад",
+  "description": "Склад, смены, накладные, долги и деньги",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

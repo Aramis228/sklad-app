@@ -1,0 +1,2259 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Склад">
+    <title>Складская система</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="styles.css?v=1.2" rel="stylesheet">
+    <link href="calculation_styles.css" rel="stylesheet">
+</head>
+<body>
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="auth-logo"><i class="fas fa-warehouse"></i></div>
+                <h1>Вход в систему склада</h1>
+                <p>Выберите роль и войдите под своим доступом</p>
+            </div>
+            <div class="auth-role-switch">
+                <button type="button" class="auth-role-btn active" id="auth-manager-tab" onclick="showAuthTab('manager')">
+                    <i class="fas fa-user-tie"></i> Руководитель
+                </button>
+                <button type="button" class="auth-role-btn" id="auth-seller-tab" onclick="showAuthTab('seller')">
+                    <i class="fas fa-user"></i> Продавец
+                </button>
+            </div>
+            <div id="auth-manager-panel" class="auth-panel active">
+                <div class="form-group">
+                    <label for="auth-manager-pin">PIN руководителя</label>
+                    <input type="password" id="auth-manager-pin" class="form-control" placeholder="Введите PIN руководителя">
+                </div>
+                <button class="btn btn-primary auth-submit-btn" onclick="loginAsManager()">
+                    <i class="fas fa-right-to-bracket"></i> Войти как руководитель
+                </button>
+                <div class="auth-help">Если PIN еще не настроен, первый вход руководителя будет выполнен без PIN.</div>
+            </div>
+            <div id="auth-seller-panel" class="auth-panel">
+                <div class="form-group">
+                    <label for="auth-seller-name">Имя продавца</label>
+                    <input type="text" id="auth-seller-name" class="form-control" placeholder="Например: Алина">
+                </div>
+                <div class="form-group">
+                    <label for="auth-seller-pin">PIN продавца</label>
+                    <input type="password" id="auth-seller-pin" class="form-control" placeholder="Введите PIN продавца">
+                </div>
+                <button class="btn btn-primary auth-submit-btn" onclick="loginAsSeller()">
+                    <i class="fas fa-right-to-bracket"></i> Войти как продавец
+                </button>
+                <div class="auth-help">Продавец видит только свои рабочие разделы и вкладку смены.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Боковая панель навигации -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <i class="fas fa-warehouse"></i>
+                    <h2>Склад</h2>
+                </div>
+                <div class="sidebar-session">
+                    <div class="sidebar-session-text">
+                        <strong id="sidebar-session-name">Не выполнен вход</strong>
+                        <span id="sidebar-session-role">Ожидание входа</span>
+                    </div>
+                    <div class="sidebar-session-actions">
+                        <button class="btn btn-secondary btn-sm" id="sidebar-logout-btn" onclick="logoutCurrentUser()">
+                            <i class="fas fa-sign-out-alt"></i> Выйти
+                        </button>
+                        <button class="btn btn-primary btn-sm sidebar-mode-toggle" id="seller-view-toggle-btn" onclick="toggleSellerSimpleMode()" style="display: none;">
+                            <i class="fas fa-eye"></i> Переключиться из простого режима в обычный
+                        </button>
+                    </div>
+                    <div id="seller-mode-note" class="sidebar-mode-note" style="display: none;"></div>
+                </div>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-tab="dashboard">
+                    <i class="fas fa-home"></i>
+                    <span>Главная</span>
+                </li>
+                <li class="nav-item" data-tab="warehouse">
+                    <i class="fas fa-warehouse"></i>
+                    <span>Склад</span>
+                </li>
+                <li class="nav-item" data-tab="categories">
+                    <i class="fas fa-layer-group"></i>
+                    <span>Категории</span>
+                </li>
+                <li class="nav-item" data-tab="products">
+                    <i class="fas fa-box-open"></i>
+                    <span>Товары</span>
+                </li>
+                <li class="nav-item" data-tab="clients">
+                    <i class="fas fa-user-friends"></i>
+                    <span>Клиенты</span>
+                </li>
+                <li class="nav-item" data-tab="shift">
+                    <i class="fas fa-cash-register"></i>
+                    <span>Смена</span>
+                </li>
+                <li class="nav-item" data-tab="incoming">
+                    <i class="fas fa-truck-loading"></i>
+                    <span>Приход</span>
+                </li>
+                <li class="nav-item" data-tab="invoices">
+                    <i class="fas fa-receipt"></i>
+                    <span>Накладные</span>
+                </li>
+                <li class="nav-item" data-tab="debts">
+                    <i class="fas fa-money-bill-wave"></i>
+                    <span>Долги</span>
+                </li>
+                <li class="nav-item" data-tab="money">
+                    <i class="fas fa-vault"></i>
+                    <span>Деньги</span>
+                </li>
+                <li class="nav-item" data-tab="movements">
+                    <i class="fas fa-arrows-alt-h"></i>
+                    <span>Движение</span>
+                </li>
+                <li class="nav-item" data-tab="reports">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Отчеты</span>
+                </li>
+                <li class="nav-item" data-tab="calculation">
+                    <i class="fas fa-calculator"></i>
+                    <span>Расчёт табака</span>
+                </li>
+                <li class="nav-item" data-tab="roast-calculation">
+                    <i class="fas fa-fire"></i>
+                    <span>Расчёт жарки</span>
+                </li>
+                <li class="nav-item" data-tab="accounting">
+                    <i class="fas fa-book"></i>
+                    <span>Бухгалтерия</span>
+                </li>
+                <li class="nav-item" data-tab="settings">
+                    <i class="fas fa-cog"></i>
+                    <span>Настройки</span>
+                </li>
+                <li class="nav-item" data-tab="admin-panel">
+                    <i class="fas fa-user-shield"></i>
+                    <span>Админ панель</span>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Основной контент -->
+        <main class="main-content">
+            <!-- Панель статистики -->
+            <div class="stats-panel">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        📦
+                    </div>
+                    <div class="stat-info">
+                        <h3 id="total-products">0</h3>
+                        <p>Всего товаров</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        📈
+                    </div>
+                    <div class="stat-info">
+                        <h3 id="total-sales">0 ₽</h3>
+                        <p>Продажи сегодня</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        🏢
+                    </div>
+                    <div class="stat-info">
+                        <h3 id="warehouse-value">0 ₽</h3>
+                        <p>Стоимость склада</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        💰
+                    </div>
+                    <div class="stat-info">
+                        <h3 id="total-debt">0 ₽</h3>
+                        <p>Общий долг</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Быстрые действия -->
+            <div id="quick-actions" class="quick-actions">
+                <h3><i class="fas fa-bolt"></i> Быстрые действия</h3>
+                <div class="quick-actions-grid">
+                    <button class="quick-action-btn" onclick="showCreateInvoiceModalWithInit()">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-receipt"></i>
+                        </div>
+                        <span>Создать накладную</span>
+                    </button>
+                    <button class="quick-action-btn" onclick="showAddProductModal()">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-box-open"></i>
+                        </div>
+                        <span>Добавить товар</span>
+                    </button>
+                    <button class="quick-action-btn" onclick="showAddClientModal()">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-user-friends"></i>
+                        </div>
+                        <span>Добавить клиента</span>
+                    </button>
+                    <button class="quick-action-btn" onclick="showAddDebtModal()">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-money-bill-wave"></i>
+                        </div>
+                        <span>Новый долг</span>
+                    </button>
+                    <button class="quick-action-btn" onclick="showAddCategoryModal()">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-layer-group"></i>
+                        </div>
+                        <span>Добавить категорию</span>
+                    </button>
+                    <button class="quick-action-btn" onclick="switchTab('products')">
+                        <div class="quick-action-icon">
+                            <i class="fas fa-search"></i>
+                        </div>
+                        <span>Поиск товаров</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Контент вкладок -->
+            <div class="tab-content">
+                <!-- Главная панель -->
+                <div id="dashboard" class="tab-pane active">
+                    <div class="dashboard-grid">
+                        <div class="recent-operations">
+                            <h3><i class="fas fa-clock"></i> Последние операции</h3>
+                            <div id="recent-operations-list" class="operations-list">
+                                <!-- Операции будут добавляться динамически -->
+                            </div>
+                        </div>
+                        <div class="recent-invoices">
+                            <h3><i class="fas fa-receipt"></i> Последние накладные</h3>
+                            <div id="recent-invoices-list" class="invoices-list">
+                                <!-- Накладные будут добавляться динамически -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="warehouse" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-warehouse"></i> Склад</h2>
+                    </div>
+                    <div class="dashboard-overview-card warehouse-overview-card">
+                        <div class="dashboard-overview-header">
+                            <div>
+                                <h3><i class="fas fa-boxes-stacked"></i> Остатки склада</h3>
+                                <p>Текущий товар, пакеты, открытые остатки и сверка смены</p>
+                            </div>
+                        </div>
+                        <div id="warehouse-inventory-overview" class="dashboard-inventory-overview"></div>
+                    </div>
+                </div>
+
+                <div id="admin-panel" class="tab-pane">
+                    <section class="admin-workspace" id="manager-control-center">
+                        <div class="admin-hero">
+                            <div>
+                                <span>Админ панель</span>
+                                <h2><i class="fas fa-user-shield"></i> Доступ и журнал действий</h2>
+                                <p>PIN-коды, облако, текущая роль и история операций собраны в одном рабочем экране.</p>
+                            </div>
+                            <span id="cloud-sync-badge" class="status-chip status-chip-muted">Локально</span>
+                        </div>
+
+                        <section class="admin-access-panel">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <strong>Управление доступом</strong>
+                                    <small>Кто вошел сейчас, какие PIN-коды стоят и что можно быстро изменить.</small>
+                                </div>
+                            </div>
+                            <div class="admin-access-grid">
+                                <div class="admin-status-tile">
+                                    <span>Текущий режим</span>
+                                    <strong id="current-role-label">Руководитель</strong>
+                                    <small id="manager-session-note">Продавец не увидит служебные инструменты после входа под своей ролью.</small>
+                                </div>
+                                <div class="admin-status-tile">
+                                    <span>PIN-коды</span>
+                                    <strong id="manager-pin-status">Не заданы</strong>
+                                    <small>Проверяйте оба PIN перед передачей файла работнику.</small>
+                                </div>
+                                <button class="admin-action-tile primary" onclick="configureManagerPin()">
+                                    <i class="fas fa-key"></i>
+                                    <span>PIN руководителя</span>
+                                </button>
+                                <button class="admin-action-tile" onclick="configureSellerPin()">
+                                    <i class="fas fa-user-lock"></i>
+                                    <span>PIN продавца</span>
+                                </button>
+                                <button class="admin-action-tile" onclick="configureCloudSync()">
+                                    <i class="fas fa-cloud"></i>
+                                    <span>Настроить облако</span>
+                                </button>
+                                <button class="admin-action-tile" onclick="syncCloudNow()">
+                                    <i class="fas fa-arrows-rotate"></i>
+                                    <span>Синхронизировать</span>
+                                </button>
+                                <button class="admin-action-tile" onclick="logoutCurrentUser()">
+                                    <i class="fas fa-sign-out-alt"></i>
+                                    <span>Выйти</span>
+                                </button>
+                            </div>
+                        </section>
+
+                        <section class="admin-audit-panel" id="manager-audit-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <strong>Журнал аудита</strong>
+                                    <small>История действий с поиском, фильтрами и страницами.</small>
+                                </div>
+                                <span id="audit-log-count" class="status-chip status-chip-info">0 действий</span>
+                            </div>
+                            <div class="audit-toolbar">
+                                <input type="search" id="audit-filter-search" class="form-control" placeholder="Поиск по действию, человеку, клиенту, сумме" oninput="handleActivityLogFilterChange()">
+                                <select id="audit-filter-type" class="form-control" onchange="handleActivityLogFilterChange()">
+                                    <option value="all">Все действия</option>
+                                    <option value="invoice">Накладные</option>
+                                    <option value="debt">Долги</option>
+                                    <option value="incoming">Приход</option>
+                                    <option value="shift">Смены</option>
+                                    <option value="cash">Наличные</option>
+                                    <option value="access">Доступ</option>
+                                </select>
+                                <select id="audit-filter-date-mode" class="form-control" onchange="handleActivityLogDateModeChange()">
+                                    <option value="all">Все даты</option>
+                                    <option value="day">Конкретный день</option>
+                                    <option value="range">Диапазон дат</option>
+                                    <option value="after">После даты</option>
+                                </select>
+                                <label class="audit-date-field" id="audit-filter-date-exact-wrap">
+                                    <span>День</span>
+                                    <input type="date" id="audit-filter-date-exact" class="form-control" onchange="handleActivityLogFilterChange()">
+                                </label>
+                                <label class="audit-date-field" id="audit-filter-date-from-wrap">
+                                    <span>С даты</span>
+                                    <input type="date" id="audit-filter-date-from" class="form-control" onchange="handleActivityLogFilterChange()">
+                                </label>
+                                <label class="audit-date-field" id="audit-filter-date-to-wrap">
+                                    <span>По дату</span>
+                                    <input type="date" id="audit-filter-date-to" class="form-control" onchange="handleActivityLogFilterChange()">
+                                </label>
+                                <select id="audit-filter-page-size" class="form-control" onchange="handleActivityLogFilterChange()">
+                                    <option value="20">20 на странице</option>
+                                    <option value="50">50 на странице</option>
+                                    <option value="all">Все</option>
+                                </select>
+                                <button class="btn btn-secondary btn-sm" onclick="resetActivityLogFilters()">
+                                    <i class="fas fa-filter-circle-xmark"></i> Сбросить
+                                </button>
+                            </div>
+                            <div id="activity-log-preview" class="activity-log-preview audit-table-wrap"></div>
+                            <div id="audit-log-pagination" class="audit-log-pagination"></div>
+                        </section>
+                    </section>
+                </div>
+
+                <!-- Категории -->
+                <div id="categories" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-layer-group"></i> Категории товаров</h2>
+                        <button class="btn btn-primary" onclick="showAddCategoryModal()">
+                            <i class="fas fa-plus"></i> Добавить категорию
+                        </button>
+                    </div>
+                    <div id="categories-list" class="categories-grid">
+                        <!-- Категории будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Товары -->
+                <div id="products" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-box-open"></i> Товары</h2>
+                        <button class="btn btn-primary" onclick="showAddProductModal()">
+                            <i class="fas fa-plus"></i> Добавить товар
+                        </button>
+                    </div>
+                    <div class="product-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="category-filter">Категория:</label>
+                                <select id="category-filter" class="form-control">
+                                    <option value="">Все категории</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <label for="product-search">Поиск:</label>
+                                <input type="text" id="product-search" class="form-control" placeholder="Поиск товаров...">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="products-list" class="products-grid">
+                        <!-- Товары будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Клиенты -->
+                <div id="clients" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-user-friends"></i> Клиенты</h2>
+                        <button class="btn btn-primary" onclick="showAddClientModal()">
+                            <i class="fas fa-plus"></i> Добавить клиента
+                        </button>
+                    </div>
+                    <div class="product-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="client-search">Поиск:</label>
+                                <input type="text" id="client-search" class="form-control" placeholder="Поиск клиентов по имени..." oninput="loadClients()">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="clients-list" class="clients-grid">
+                        <!-- Клиенты будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Смена -->
+                <div id="shift" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-cash-register"></i> Смена</h2>
+                    </div>
+                    <div class="control-card">
+                            <div class="control-card-header">
+                            <div>
+                                <h3><i class="fas fa-wallet"></i> Контроль кассы</h3>
+                                <p>Стартовая касса <span id="shift-start-cash-label">7 000 ₽</span> сравнивается с фактом в конце смены</p>
+                            </div>
+                            <span id="shift-status-chip" class="status-chip status-chip-muted">Смена не открыта</span>
+                        </div>
+                        <div class="control-card-body">
+                            <div class="shift-open-form" id="shift-open-form">
+                                <div class="form-group compact">
+                                    <label for="shift-seller-name">Имя продавца</label>
+                                    <input type="text" id="shift-seller-name" class="form-control" placeholder="Например: Алина">
+                                </div>
+                                <button class="btn btn-success" onclick="openShift()">
+                                    <i class="fas fa-play"></i> Открыть смену
+                                </button>
+                            </div>
+
+                            <div class="shift-close-form" id="shift-close-form" style="display: none;">
+                                <div class="form-group compact">
+                                    <label for="shift-actual-cash">Фактическая сумма в кассе</label>
+                                    <input type="number" id="shift-actual-cash" class="form-control" min="0" step="0.01" placeholder="Сколько реально лежит в кассе">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="shift-cash-to-leave">Оставить в кассе на сдачу</label>
+                                    <input type="number" id="shift-cash-to-leave" class="form-control" min="0" step="0.01" placeholder="Например: 5000">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="shift-fact-tobacco">Факт табака на складе</label>
+                                    <input type="number" id="shift-fact-tobacco" class="form-control" min="0" step="1" placeholder="Сколько реально шт.">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="shift-fact-roast">Факт жарки на складе</label>
+                                    <input type="number" id="shift-fact-roast" class="form-control" min="0" step="1" placeholder="Сколько реально шт.">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="shift-fact-soup">Факт супа на складе, шт</label>
+                                    <input type="number" id="shift-fact-soup" class="form-control" min="0" step="1" placeholder="Сколько штук реально осталось">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="shift-close-note">Комментарий к закрытию смены</label>
+                                    <input type="text" id="shift-close-note" class="form-control" placeholder="Например: забрали часть денег домой">
+                                </div>
+                                <button class="btn btn-warning" onclick="closeShift()">
+                                    <i class="fas fa-flag-checkered"></i> Закрыть смену
+                                </button>
+                            </div>
+
+                            <div id="shift-summary" class="shift-summary"></div>
+                            <div class="shift-history-panel">
+                                <div class="shift-history-head">
+                                    <div>
+                                        <strong>История смен</strong>
+                                        <small id="shift-history-count">0 смен</small>
+                                    </div>
+                                    <button class="btn btn-secondary btn-sm" onclick="resetShiftHistoryFilters()">
+                                        <i class="fas fa-rotate-left"></i> Сбросить
+                                    </button>
+                                </div>
+                                <div class="shift-history-filters">
+                                    <div class="form-group compact">
+                                        <label for="shift-history-search">Поиск</label>
+                                        <input type="text" id="shift-history-search" class="form-control" placeholder="Продавец или комментарий" oninput="handleShiftHistoryFilterChange()">
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="shift-history-from">С даты</label>
+                                        <input type="date" id="shift-history-from" class="form-control" onchange="handleShiftHistoryFilterChange()">
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="shift-history-to">По дату</label>
+                                        <input type="date" id="shift-history-to" class="form-control" onchange="handleShiftHistoryFilterChange()">
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="shift-history-status">Статус</label>
+                                        <select id="shift-history-status" class="form-control" onchange="handleShiftHistoryFilterChange()">
+                                            <option value="all">Все</option>
+                                            <option value="closed">Закрытые</option>
+                                            <option value="open">Открытые</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="shift-history-difference">Касса</label>
+                                        <select id="shift-history-difference" class="form-control" onchange="handleShiftHistoryFilterChange()">
+                                            <option value="all">Любая</option>
+                                            <option value="ok">Ровно</option>
+                                            <option value="over">Плюс</option>
+                                            <option value="under">Минус</option>
+                                            <option value="mismatch">С расхождением</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="shift-history-page-size">Показывать</label>
+                                        <select id="shift-history-page-size" class="form-control" onchange="handleShiftHistoryFilterChange()">
+                                            <option value="10">10</option>
+                                            <option value="25">25</option>
+                                            <option value="all">Все</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="recent-shifts-list" class="recent-shifts-list"></div>
+                            <div id="shift-history-pagination" class="shift-history-pagination"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Приход -->
+                <div id="incoming" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-truck-loading"></i> Приход</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-primary" onclick="showAddIncomingReceiptModal()">
+                                <i class="fas fa-plus"></i> Принять накладную
+                            </button>
+                            <button class="btn btn-secondary manager-only-action" onclick="showSupplierTotalPaymentModal()">
+                                <i class="fas fa-wallet"></i> Оплатить общий долг
+                            </button>
+                            <button class="btn btn-secondary manager-only-action" onclick="showArchivedIncomingReceipts()">
+                                <i class="fas fa-archive"></i> Архив приходных
+                            </button>
+                            <button class="btn btn-secondary manager-only-action" onclick="loadIncomingData()">
+                                <i class="fas fa-rotate"></i> Обновить
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="product-filters incoming-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="incoming-report-date">Дата отчёта:</label>
+                                <input type="date" id="incoming-report-date" class="form-control" onchange="loadIncomingData()">
+                            </div>
+                            <div class="filter-item">
+                                <button class="btn btn-secondary" onclick="loadIncomingData()">
+                                    <i class="fas fa-chart-line"></i> Показать отчёт
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="incoming-daily-summary" class="incoming-summary-grid"></div>
+
+                    <div class="incoming-layout">
+                        <div class="control-card">
+                            <div class="control-card-header">
+                                <div>
+                                    <h3><i class="fas fa-clipboard-check"></i> Ежедневный отчёт</h3>
+                                    <p>Коротко и по факту: что было утром, что приняли и что ушло за день</p>
+                                </div>
+                            </div>
+                            <div class="control-card-body">
+                                <div id="incoming-day-report"></div>
+                            </div>
+                        </div>
+
+                        <div class="control-card">
+                            <div class="control-card-header">
+                                <div>
+                                    <h3><i class="fas fa-file-invoice-dollar"></i> Накладные поставщика</h3>
+                                    <p>Сколько приняли, на какую сумму и сколько осталось оплатить</p>
+                                </div>
+                            </div>
+                            <div class="control-card-body">
+                                <div id="supplier-debt-summary" class="supplier-debt-summary"></div>
+                                <div id="incoming-receipts-list" class="incoming-history-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Накладные -->
+                <div id="invoices" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-receipt"></i> Накладные</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-primary" onclick="showCreateInvoiceModalWithInit()">
+                                <i class="fas fa-plus"></i> Создать накладную
+                            </button>
+                            <button class="btn btn-info manager-only-action" onclick="selectAllInvoices()" id="selectAllBtn">
+                                <i class="fas fa-check-square"></i> Выбрать все
+                            </button>
+                            <button class="btn btn-success manager-only-action" onclick="showMultiInvoiceCalculator()" id="multiCalcBtn" style="display: none;">
+                                <i class="fas fa-calculator"></i> Рассчитать общую сдачу
+                            </button>
+                            <button class="btn btn-secondary manager-only-action" onclick="showArchivedInvoices()">
+                                <i class="fas fa-archive"></i> Архив
+                            </button>
+                            <button class="btn btn-danger manager-only-action" onclick="clearAllInvoices()">
+                                <i class="fas fa-trash"></i> Очистить все
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Панель выбранных накладных -->
+                    <div id="selectedInvoicesPanel" class="selected-invoices-panel" style="display: none;">
+                        <div class="selected-info">
+                            <i class="fas fa-list-check"></i>
+                            <span>Выбрано накладных: <strong id="selectedCount">0</strong></span>
+                            <span>Общая сумма: <strong id="selectedTotal">0 ₽</strong></span>
+                        </div>
+                        <div class="selected-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="clearSelection()">
+                                <i class="fas fa-times"></i> Снять выбор
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Фильтры для накладных -->
+                    <div class="invoice-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="invoice-search">Поиск:</label>
+                                <input type="text" id="invoice-search" class="form-control" placeholder="Поиск по клиенту, товарам, примечаниям..." oninput="loadInvoices()">
+                            </div>
+                            <div class="filter-item">
+                                <label for="invoice-client-filter">Клиент:</label>
+                                <select id="invoice-client-filter" class="form-control" onchange="loadInvoices()">
+                                    <option value="">Все клиенты</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <label for="invoice-date-filter">Дата:</label>
+                                <input type="date" id="invoice-date-filter" class="form-control" onchange="loadInvoices()">
+                            </div>
+                            <div class="filter-item">
+                                <label for="invoice-payment-filter">Тип оплаты:</label>
+                                <select id="invoice-payment-filter" class="form-control" onchange="loadInvoices()">
+                                    <option value="">Все типы</option>
+                                    <option value="cash">Наличными</option>
+                                    <option value="debt">В долг</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <label for="invoice-recent-filter">Период:</label>
+                                <select id="invoice-recent-filter" class="form-control" onchange="loadInvoices()">
+                                    <option value="">Все накладные</option>
+                                    <option value="today">Сегодня</option>
+                                    <option value="yesterday">Вчера</option>
+                                    <option value="week">За неделю</option>
+                                    <option value="month">За месяц</option>
+                                    <option value="last5">Последние 5</option>
+                                    <option value="last10">Последние 10</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <button class="btn btn-secondary" onclick="clearInvoiceFilters()" title="Очистить фильтры">
+                                    <i class="fas fa-times"></i> Очистить
+                                </button>
+                            </div>
+                        </div>
+                        <div class="filter-counter">
+                            <span id="invoice-filter-count">Всего: 0</span>
+                        </div>
+                    </div>
+                    
+                    <div id="invoices-list" class="invoices-grid">
+                        <!-- Накладные будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Долги -->
+                <div id="debts" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-money-bill-wave"></i> Долги</h2>
+                        <div class="debt-controls">
+                            <button class="btn btn-primary" onclick="showAddDebtModal()">
+                                <i class="fas fa-plus"></i> Новый долг
+                            </button>
+                            <button class="btn btn-success" onclick="showCertificateDebtModal()">
+                                <i class="fas fa-file-medical"></i> Выписать справки
+                            </button>
+                            <button class="btn btn-info manager-only-action" onclick="validateDebtsIntegrity()" title="Проверить целостность долгов">
+                                <i class="fas fa-shield-alt"></i> Проверить
+                            </button>
+                            <button class="btn btn-warning manager-only-action" onclick="backupBeforeFix(); fixDebtsIssues()" title="Автоматически исправить проблемы">
+                                <i class="fas fa-tools"></i> Исправить
+                            </button>
+                            <button class="btn btn-secondary manager-only-action" onclick="restoreFromBackup()" title="Восстановить из резервной копии">
+                                <i class="fas fa-undo"></i> Восстановить
+                            </button>
+                            <button class="btn btn-dark" onclick="showArchivedDebts()" title="Архив долгов">
+                                <i class="fas fa-archive"></i> Архив долгов
+                            </button>
+                        </div>
+                    </div>
+                    <div id="debts-list" class="debts-grid">
+                        <!-- Долги будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Деньги -->
+                <div id="money" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-vault"></i> Деньги</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-secondary" onclick="loadMoneyData()">
+                                <i class="fas fa-rotate"></i> Обновить
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div>
+                                <h3><i class="fas fa-location-dot"></i> Где лежат деньги</h3>
+                                <p>Касса работника, деньги у Сашика, карта, долги клиентов, товар и долг поставщику</p>
+                            </div>
+                        </div>
+                        <div class="control-card-body">
+                            <div id="money-overview"></div>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div>
+                                <h3><i class="fas fa-sliders"></i> Правила смены</h3>
+                                <p>Сколько оставлять работнику на сдачу и куда отправлять остальную наличку</p>
+                            </div>
+                        </div>
+                        <div class="control-card-body">
+                            <div class="shift-open-form">
+                                <div class="form-group compact">
+                                    <label for="money-shift-cash-to-leave">Оставлять в кассе после смены</label>
+                                    <input type="number" id="money-shift-cash-to-leave" class="form-control" min="0" step="0.01" placeholder="5000">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="money-default-receiver">Куда передавать выручку</label>
+                                    <select id="money-default-receiver" class="form-control" data-money-wallet-select data-default-wallet="sasha_cash"></select>
+                                </div>
+                                <button class="btn btn-primary" onclick="saveMoneySettings()">
+                                    <i class="fas fa-save"></i> Сохранить правила
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div>
+                                <h3><i class="fas fa-money-bill-transfer"></i> Операция с деньгами</h3>
+                                <p>Зарплата, аренда, расходники, пополнение или перемещение между кошельками</p>
+                            </div>
+                        </div>
+                        <div class="control-card-body">
+                            <form id="money-operation-form" class="money-operation-form" onsubmit="event.preventDefault(); saveMoneyOperation();">
+                                <div class="form-group compact">
+                                    <label for="money-operation-type">Тип операции</label>
+                                    <select id="money-operation-type" class="form-control" onchange="updateMoneyOperationForm()">
+                                        <option value="expense">Расход</option>
+                                        <option value="income">Поступление</option>
+                                        <option value="transfer">Перемещение</option>
+                                    </select>
+                                </div>
+                                <div class="form-group compact" id="money-operation-from-wrap">
+                                    <label for="money-operation-from">Откуда</label>
+                                    <select id="money-operation-from" class="form-control" data-money-wallet-select data-default-wallet="sasha_cash"></select>
+                                </div>
+                                <div class="form-group compact" id="money-operation-to-wrap">
+                                    <label for="money-operation-to">Куда</label>
+                                    <select id="money-operation-to" class="form-control" data-money-wallet-select data-default-wallet="sasha_cash"></select>
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="money-operation-amount">Сумма</label>
+                                    <input type="number" id="money-operation-amount" class="form-control" min="0" step="0.01" placeholder="0">
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="money-operation-category">Категория</label>
+                                    <select id="money-operation-category" class="form-control"></select>
+                                </div>
+                                <div class="form-group compact">
+                                    <label for="money-operation-counterparty">Кому / от кого</label>
+                                    <input type="text" id="money-operation-counterparty" class="form-control" placeholder="Например: аренда, продавец, Саша">
+                                </div>
+                                <div class="form-group compact money-operation-note">
+                                    <label for="money-operation-note">Комментарий</label>
+                                    <input type="text" id="money-operation-note" class="form-control" placeholder="За что именно">
+                                </div>
+                                <button class="btn btn-primary" type="submit">
+                                    <i class="fas fa-plus"></i> Добавить операцию
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div>
+                                <h3><i class="fas fa-list"></i> История денег</h3>
+                                <p>Все передачи, расходы, пополнения и оплаты поставщику</p>
+                            </div>
+                        </div>
+                        <div class="control-card-body">
+                            <div class="money-history-controls">
+                                <input type="search" id="money-history-search" class="form-control" placeholder="Поиск по категории, комментарию, кошельку" oninput="handleMoneyHistoryFilterChange()">
+                                <select id="money-history-type-filter" class="form-control" onchange="handleMoneyHistoryFilterChange()">
+                                    <option value="all">Все операции</option>
+                                    <option value="income">Поступления</option>
+                                    <option value="expense">Расходы</option>
+                                    <option value="transfer">Перемещения</option>
+                                    <option value="shift_transfer">Передачи смены</option>
+                                    <option value="supplier_payment">Поставщик</option>
+                                    <option value="debt_payment">Долги</option>
+                                </select>
+                                <select id="money-history-wallet-filter" class="form-control" onchange="handleMoneyHistoryFilterChange()"></select>
+                                <select id="money-history-date-mode" class="form-control" onchange="handleMoneyHistoryDateModeChange()">
+                                    <option value="all">Все даты</option>
+                                    <option value="day">Конкретный день</option>
+                                    <option value="range">Диапазон дат</option>
+                                    <option value="after">После даты</option>
+                                </select>
+                                <label class="money-history-date-field" id="money-history-date-exact-wrap">
+                                    <span>День</span>
+                                    <input type="date" id="money-history-date-exact" class="form-control" onchange="handleMoneyHistoryFilterChange()">
+                                </label>
+                                <label class="money-history-date-field" id="money-history-date-from-wrap">
+                                    <span>С даты</span>
+                                    <input type="date" id="money-history-date-from" class="form-control" onchange="handleMoneyHistoryFilterChange()">
+                                </label>
+                                <label class="money-history-date-field" id="money-history-date-to-wrap">
+                                    <span>По дату</span>
+                                    <input type="date" id="money-history-date-to" class="form-control" onchange="handleMoneyHistoryFilterChange()">
+                                </label>
+                                <select id="money-history-page-size" class="form-control" onchange="handleMoneyHistoryFilterChange()">
+                                    <option value="20">20 на странице</option>
+                                    <option value="50">50 на странице</option>
+                                    <option value="all">Все</option>
+                                </select>
+                                <button class="btn btn-secondary btn-sm" type="button" onclick="resetMoneyHistoryFilters()">
+                                    <i class="fas fa-rotate-left"></i> Сбросить
+                                </button>
+                            </div>
+                            <div class="money-history-meta">
+                                <span id="money-history-count">0 операций</span>
+                                <div id="money-history-pagination" class="money-history-pagination"></div>
+                            </div>
+                            <div id="money-history"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Движение по складу -->
+                <div id="movements" class="tab-pane">
+                    <div class="section-header">
+                        <h2 class="gradient-text"><i class="fas fa-arrows-alt-h"></i> Движение по складу</h2>
+                        <button class="btn btn-danger" onclick="clearAllMovements()">
+                            <i class="fas fa-trash"></i> Очистить историю
+                        </button>
+                    </div>
+                    <div id="movements-list" class="movements-list">
+                        <!-- Движения будут добавляться динамически -->
+                    </div>
+                </div>
+
+                <!-- Отчеты -->
+                <div id="reports" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-chart-bar"></i> Отчеты по продажам</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-info manager-only-action" onclick="debugReports()" title="Отладочная информация в консоли">
+                                <i class="fas fa-bug"></i> Отладка
+                            </button>
+                            <button class="btn btn-primary manager-only-action" onclick="exportSalesReport()">
+                                <i class="fas fa-download"></i> Экспорт отчета
+                            </button>
+                            <button class="btn btn-danger manager-only-action" onclick="clearAllReports()">
+                                <i class="fas fa-trash"></i> Очистить отчеты
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Фильтры для отчетов -->
+                    <div class="reports-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="report-date">Дата:</label>
+                                <input type="date" id="report-date" class="form-control" value="">
+                            </div>
+                            <div class="filter-item">
+                                <label for="report-period">Период:</label>
+                                <select id="report-period" class="form-control">
+                                    <option value="today">Сегодня</option>
+                                    <option value="yesterday">Вчера</option>
+                                    <option value="week">За неделю</option>
+                                    <option value="month">За месяц</option>
+                                    <option value="all">Все время</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <button class="btn btn-secondary" onclick="generateReport()">
+                                    <i class="fas fa-search"></i> Сгенерировать отчет
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Вкладки отчетов -->
+                    <div class="reports-tabs">
+                        <div class="tab-buttons">
+                            <button class="tab-btn active" onclick="switchReportTab('summary')" id="summary-tab">
+                                <i class="fas fa-chart-bar"></i> Сводка
+                            </button>
+                            <button class="tab-btn" onclick="switchReportTab('personal-prices')" id="personal-prices-tab">
+                                <i class="fas fa-chart-line"></i> Анализ цен
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Контент отчетов -->
+                    <div class="reports-content">
+                        <!-- Вкладка сводки -->
+                        <div id="summary-tab-content" class="report-tab-content active">
+                            <div class="report-summary">
+                            <div class="summary-card">
+                                <div class="summary-icon">
+                                    <i class="fas fa-chart-line"></i>
+                                </div>
+                                <div class="summary-info">
+                                    <h3 id="total-sales-report">0 ₽</h3>
+                                    <p>Общая выручка</p>
+                                </div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-icon">
+                                    <i class="fas fa-shopping-cart"></i>
+                                </div>
+                                <div class="summary-info">
+                                    <h3 id="total-orders-report">0</h3>
+                                    <p>Количество заказов</p>
+                                </div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-icon">
+                                    <i class="fas fa-box"></i>
+                                </div>
+                                <div class="summary-info">
+                                    <h3 id="total-items-report">0</h3>
+                                    <p>Проданных товаров</p>
+                                </div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-icon">
+                                    <i class="fas fa-chart-pie"></i>
+                                </div>
+                                <div class="summary-info">
+                                    <h3 id="avg-order-report">0 ₽</h3>
+                                    <p>Средний чек</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Детализация продаж по товарам -->
+                        <div class="report-details">
+                            <div class="report-details-header">
+                                <h3><i class="fas fa-list"></i> Детализация продаж по товарам</h3>
+                                <div class="report-actions">
+                                    <button class="btn btn-danger btn-sm manager-only-action" onclick="deleteSelectedInvoices()" id="deleteSelectedBtn" style="display: none;">
+                                        <i class="fas fa-trash"></i> Удалить выбранные
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="sales-details">
+                                <!-- Детали продаж будут добавляться динамически -->
+                            </div>
+                        </div>
+                        
+                        </div>
+                        
+                        <!-- Вкладка персональных цен -->
+                        <div id="personal-prices-tab-content" class="report-tab-content">
+                            <div class="personal-prices-analysis">
+                                <div class="personal-prices-header">
+                                    <h3><i class="fas fa-chart-line"></i> Анализ продаж по ценам</h3>
+                                    <div class="header-buttons">
+                                        <button class="btn btn-info btn-sm" onclick="forceUpdatePersonalPrices()" title="Принудительно обновить данные">
+                                            <i class="fas fa-sync"></i> Обновить
+                                        </button>
+                                        <button class="btn btn-danger btn-sm" onclick="clearPersonalPricesData()" title="Очистить все данные персональных цен">
+                                            <i class="fas fa-trash"></i> Очистить
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="analysis-description">
+                                    <p>Распределение продаж по ценам для каждого товара. Помогает анализировать маржу с учетом персональных скидок.</p>
+                                </div>
+                                <div id="personal-prices-details">
+                                    <!-- Анализ персональных цен будет добавляться динамически -->
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Заработок -->
+                <div id="earnings" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-coins"></i> Заработок за сегодня</h2>
+                    </div>
+                    <div class="text-muted" style="margin: -6px 0 12px 0;">
+                        Укажи свою маржу по каждой позиции, и система посчитает чистую прибыль и итог.
+                    </div>
+                    <div class="reports-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="earnings-date">Дата:</label>
+                                <input type="date" id="earnings-date" class="form-control">
+                            </div>
+                            <div class="filter-item">
+                                <label for="earnings-margin-type">Тип маржи:</label>
+                                <select id="earnings-margin-type" class="form-control" title="Фикс — ₽ за единицу. Процент — % от суммы продажи.">
+                                    <option value="absolute">Фикс ₽ за единицу</option>
+                                    <option value="percent">Процент от суммы продажи</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <button class="btn btn-secondary" onclick="loadEarnings()">
+                                    <i class="fas fa-rotate"></i> Обновить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Товар</th>
+                                            <th class="numeric">Кол-во</th>
+                                            <th class="numeric">Цена продажи</th>
+                                            <th class="numeric">Сумма продажи</th>
+                                            <th style="min-width:160px">Ваша маржа</th>
+                                            <th class="numeric">Чистая прибыль</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="earnings-rows">
+                                        <!-- Строки с позициями будут добавляться динамически -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="summary" style="margin-top: 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                                <div>
+                                    <strong>Итого чистая прибыль:</strong> <span id="earnings-total">0 ₽</span>
+                                </div>
+                                <div>
+                                    <strong>Всего позиций:</strong> <span id="earnings-count">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Расчёт -->
+                <div id="calculation" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-calculator"></i> Расчёт маржи и прибыли</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-success" onclick="autoFillCalculationFromSales()" title="Автоматически заполнить данные из продаж табака">
+                                <i class="fas fa-magic"></i> Автозаполнение
+                            </button>
+                            <button class="btn btn-primary" onclick="showTobaccoSalesStats()" title="Показать детальную статистику продаж табака">
+                                <i class="fas fa-chart-line"></i> Статистика
+                            </button>
+                            <button class="btn btn-info" onclick="debugTobaccoProducts()" title="Показать товары табака в консоли">
+                                <i class="fas fa-bug"></i> Отладка табака
+                            </button>
+                            <button class="btn btn-secondary" onclick="resetCalculation()">
+                                <i class="fas fa-undo"></i> Сбросить
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="calculation-description">
+                        <p>Расчёт прибыли и средней маржи по продажам табака. Введите цену продажи и количество для каждого типа пакета.</p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table calculation-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Тип пакета</th>
+                                            <th class="numeric">Цена продажи (₽/шт)</th>
+                                            <th class="numeric">Себестоимость (₽/шт)</th>
+                                            <th class="numeric">Маржа за 1 шт (₽)</th>
+                                            <th class="numeric">Количество продано (шт)</th>
+                                            <th class="numeric">Общая прибыль (₽)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="calculation-tbody">
+                                        <!-- Динамические строки будут добавляться здесь -->
+                                    </tbody>
+                                    <tfoot class="calculation-totals">
+                                        <tr>
+                                            <td><strong>ИТОГО</strong></td>
+                                            <td class="numeric">—</td>
+                                            <td class="numeric">—</td>
+                                            <td class="numeric">—</td>
+                                            <td class="numeric"><strong id="total-quantity">0 шт</strong></td>
+                                            <td class="numeric"><strong id="total-profit">0 ₽</strong></td>
+                                        </tr>
+                                        <tr class="average-margin-row">
+                                            <td colspan="5"><strong>Средняя маржа (₽/шт):</strong></td>
+                                            <td class="numeric"><strong id="average-margin">0 ₽</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Расчёт жарки -->
+                <div id="roast-calculation" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-fire"></i> Расчёт жарки</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-success" onclick="autoFillRoastCalcFromReports()" title="Автоматически заполнить по отчётам">
+                                <i class="fas fa-magic"></i> Автозаполнение
+                            </button>
+                            <button class="btn btn-secondary" onclick="resetRoastCalc()">
+                                <i class="fas fa-undo"></i> Сбросить
+                            </button>
+                        </div>
+                    </div>
+                    <div class="calculation-description">
+                        <p>Введите, сколько кг продано по каждой комбинации. Система посчитает прибыль, суммарный вес и среднюю маржу.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table calculation-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Тип пакета</th>
+                                            <th class="numeric">Себестоимость (₽/кг)</th>
+                                            <th class="numeric">Цена (₽/кг)</th>
+                                            <th class="numeric">Кг продано</th>
+                                            <th class="numeric">Прибыль (₽)</th>
+                                            <th class="numeric">Маржа (₽/кг)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="rc-tbody">
+                                        <!-- Динамические строки будут добавлены на основе отчётов -->
+                                    </tbody>
+                                    <tfoot class="calculation-totals">
+                                        <tr>
+                                            <td><strong>Итого</strong></td>
+                                            <td class="numeric">—</td>
+                                            <td class="numeric">—</td>
+                                            <td class="numeric"><strong id="rc-total-kg">0</strong></td>
+                                            <td class="numeric"><strong id="rc-total-profit">0 ₽</strong></td>
+                                            <td class="numeric"><strong id="rc-avg-margin">0</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-muted" style="margin-top:8px; font-size:12px;">
+                        Константы: хорошая жарка — <span id="display-cost-good">300</span> ₽/кг, брак — <span id="display-cost-defect">170</span> ₽/кг, 5/0 = <span id="display-cost-5-0">300</span> ₽/кг, 4/1 = <span id="display-cost-4-1">274</span> ₽/кг, 3/2 = <span id="display-cost-3-2">248</span> ₽/кг, 2/3 = <span id="display-cost-2-3">222</span> ₽/кг.
+                    </div>
+                </div>
+
+                <!-- Бухгалтерия -->
+                <div id="accounting" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-book"></i> Бухгалтерия</h2>
+                        <div class="header-buttons">
+                            <button class="btn btn-primary" onclick="refreshAccountingData()">
+                                <i class="fas fa-sync-alt"></i> Обновить данные
+                            </button>
+                        </div>
+                    </div>
+                    <div class="reports-filters">
+                        <div class="filter-row">
+                            <div class="filter-item">
+                                <label for="accounting-date">Дата:</label>
+                                <input type="date" id="accounting-date" class="form-control">
+                            </div>
+                            <div class="filter-item">
+                                <label for="accounting-period">Период:</label>
+                                <select id="accounting-period" class="form-control">
+                                    <option value="today">Сегодня</option>
+                                    <option value="yesterday">Вчера</option>
+                                    <option value="week">За неделю</option>
+                                    <option value="month">За месяц</option>
+                                    <option value="all">Все время</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <button class="btn btn-secondary" onclick="refreshAccountingData()">
+                                    <i class="fas fa-search"></i> Применить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accounting-container">
+                        <div class="accounting-summary">
+                            <div class="accounting-card total-income">
+                                <div class="accounting-card-icon">
+                                    <i class="fas fa-money-bill-wave"></i>
+                                </div>
+                                <div class="accounting-card-content">
+                                    <h3>Общий доход</h3>
+                                    <p class="accounting-amount" id="accounting-total-income">0 ₽</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accounting-details">
+                            <h3><i class="fas fa-list"></i> Доходы по позициям</h3>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Позиция</th>
+                                            <th class="numeric">Количество</th>
+                                            <th class="numeric">Доход (₽)</th>
+                                            <th class="numeric">Средняя маржа</th>
+                                            <th class="numeric">% от общего</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="accounting-items-list">
+                                        <!-- Данные будут добавлены динамически -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Настройки -->
+                <div id="settings" class="tab-pane">
+                    <div class="section-header">
+                        <h2><i class="fas fa-cog"></i> Настройки</h2>
+                        <p class="section-description">Управление кассой и параметрами себестоимости продукции</p>
+                    </div>
+                    
+                    <div class="settings-container">
+                        <!-- Настройки кассы -->
+                        <div class="settings-card">
+                            <div class="settings-card-header">
+                                <div class="settings-card-icon">
+                                    <i class="fas fa-wallet"></i>
+                                </div>
+                                <div class="settings-card-title-group">
+                                    <h3>Стартовая касса</h3>
+                                    <p class="settings-card-subtitle">Сумма денег, которая должна быть в кассе при открытии новой смены</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body">
+                                <form id="shiftCashSettingsForm" class="settings-form">
+                                    <div class="settings-form-row">
+                                        <div class="settings-form-group">
+                                            <label for="settings-shift-start-cash" class="settings-label">
+                                                <i class="fas fa-cash-register"></i>
+                                                Стартовая сумма в кассе
+                                            </label>
+                                            <div class="settings-input-wrapper">
+                                                <input type="number" id="settings-shift-start-cash" class="settings-input" step="0.01" min="0" required placeholder="7000">
+                                                <span class="settings-input-suffix">₽</span>
+                                            </div>
+                                            <small class="settings-hint">Это значение будет записываться в новые смены. Уже закрытые смены сохранят свою стартовую сумму.</small>
+                                        </div>
+                                    </div>
+
+                                    <div class="settings-actions">
+                                        <button type="button" class="settings-btn settings-btn-primary" onclick="saveShiftCashSettings()">
+                                            <i class="fas fa-save"></i>
+                                            <span>Сохранить кассу</span>
+                                        </button>
+                                        <button type="button" class="settings-btn settings-btn-secondary" onclick="resetShiftCashSettings()">
+                                            <i class="fas fa-undo"></i>
+                                            <span>Вернуть 7 000 ₽</span>
+                                        </button>
+                                    </div>
+                                </form>
+
+                                <div id="settings-shift-cash-save-message" class="settings-alert" style="display: none;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Настройки себестоимости жарки -->
+                        <div class="settings-card settings-card-roast">
+                            <div class="settings-card-header">
+                                <div class="settings-card-icon settings-icon-roast">
+                                    <i class="fas fa-fire"></i>
+                                </div>
+                                <div class="settings-card-title-group">
+                                    <h3>Себестоимость жарки</h3>
+                                    <p class="settings-card-subtitle">Настройка стоимости жарки за килограмм</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="settings-info-box">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span>Укажите себестоимость <strong>за килограмм</strong> хорошей жарки и брака. Система автоматически рассчитает себестоимость для всех типов: 5/0, 4/1, 3/2 и 2/3.</span>
+                                </div>
+                                
+                                <form id="roastCostSettingsForm" class="settings-form">
+                                    <div class="settings-form-row">
+                                        <div class="settings-form-group">
+                                            <label for="settings-cost-good" class="settings-label">
+                                                <i class="fas fa-check-circle"></i>
+                                                Себестоимость хорошей жарки
+                                            </label>
+                                            <div class="settings-input-wrapper">
+                                                <input type="number" id="settings-cost-good" class="settings-input" step="0.01" min="0" required placeholder="0.00">
+                                                <span class="settings-input-suffix">₽/кг</span>
+                                            </div>
+                                            <small class="settings-hint">Цена за килограмм хорошей жарки</small>
+                                        </div>
+                                        <div class="settings-form-group">
+                                            <label for="settings-cost-defect" class="settings-label">
+                                                <i class="fas fa-times-circle"></i>
+                                                Себестоимость брака
+                                            </label>
+                                            <div class="settings-input-wrapper">
+                                                <input type="number" id="settings-cost-defect" class="settings-input" step="0.01" min="0" required placeholder="0.00">
+                                                <span class="settings-input-suffix">₽/кг</span>
+                                            </div>
+                                            <small class="settings-hint">Цена за килограмм брака</small>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="settings-form-group">
+                                        <label class="settings-label">
+                                            <i class="fas fa-boxes"></i>
+                                            Себестоимость по типам (автоматический расчет)
+                                        </label>
+                                        <div class="settings-packages-grid">
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">5/0</span>
+                                                    <span class="settings-package-desc">все хорошие</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-cost-5-0" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/кг</span>
+                                                </div>
+                                                <small class="settings-package-formula">(5 × хорошая) ÷ 5</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">4/1</span>
+                                                    <span class="settings-package-desc">4 хороших, 1 брак</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-cost-4-1" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/кг</span>
+                                                </div>
+                                                <small class="settings-package-formula">(4 × хорошая + 1 × брак) ÷ 5</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">3/2</span>
+                                                    <span class="settings-package-desc">3 хороших, 2 брака</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-cost-3-2" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/кг</span>
+                                                </div>
+                                                <small class="settings-package-formula">(3 × хорошая + 2 × брак) ÷ 5</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">2/3</span>
+                                                    <span class="settings-package-desc">2 хороших, 3 брака</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-cost-2-3" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/кг</span>
+                                                </div>
+                                                <small class="settings-package-formula">(2 × хорошая + 3 × брак) ÷ 5</small>
+                                            </div>
+                                        </div>
+                                        <small class="settings-hint">Себестоимость рассчитывается автоматически для каждого типа по формуле: (количество хороших × хорошая + количество браков × брак) / 5</small>
+                                    </div>
+                                    
+                                    <div class="settings-actions">
+                                        <button type="button" class="settings-btn settings-btn-primary" onclick="saveRoastCostSettings()">
+                                            <i class="fas fa-save"></i>
+                                            <span>Сохранить настройки</span>
+                                        </button>
+                                        <button type="button" class="settings-btn settings-btn-secondary" onclick="resetRoastCostSettings()">
+                                            <i class="fas fa-undo"></i>
+                                            <span>Сбросить к умолчанию</span>
+                                        </button>
+                                    </div>
+                                </form>
+                                
+                                <div id="settings-save-message" class="settings-alert" style="display: none;"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Настройки себестоимости табака -->
+                        <div class="settings-card settings-card-tobacco">
+                            <div class="settings-card-header">
+                                <div class="settings-card-icon settings-icon-tobacco">
+                                    <i class="fas fa-leaf"></i>
+                                </div>
+                                <div class="settings-card-title-group">
+                                    <h3>Себестоимость табака</h3>
+                                    <p class="settings-card-subtitle">Настройка стоимости табака за штуку</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="settings-info-box">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span>Укажите себестоимость <strong>за 1 штуку</strong>. Система автоматически рассчитает себестоимость пакетов: 6/4, 7/3, 8/2 и 10/0.</span>
+                                </div>
+                                
+                                <form id="tobaccoCostSettingsForm" class="settings-form">
+                                    <div class="settings-form-row">
+                                        <div class="settings-form-group">
+                                            <label for="settings-tobacco-good" class="settings-label">
+                                                <i class="fas fa-check-circle"></i>
+                                                Себестоимость хорошего табака
+                                            </label>
+                                            <div class="settings-input-wrapper">
+                                                <input type="number" id="settings-tobacco-good" class="settings-input" step="0.01" min="0" required placeholder="0.00">
+                                                <span class="settings-input-suffix">₽/шт</span>
+                                            </div>
+                                            <small class="settings-hint">Цена закупки одного хорошего табака (не за пакет, а за 1 штуку)</small>
+                                        </div>
+                                        <div class="settings-form-group">
+                                            <label for="settings-tobacco-defect" class="settings-label">
+                                                <i class="fas fa-times-circle"></i>
+                                                Себестоимость брака
+                                            </label>
+                                            <div class="settings-input-wrapper">
+                                                <input type="number" id="settings-tobacco-defect" class="settings-input" step="0.01" min="0" required placeholder="0.00">
+                                                <span class="settings-input-suffix">₽/шт</span>
+                                            </div>
+                                            <small class="settings-hint">Цена закупки одного брака (не за пакет, а за 1 штуку)</small>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="settings-form-group">
+                                        <label class="settings-label">
+                                            <i class="fas fa-boxes"></i>
+                                            Себестоимость за штуку пакета (автоматический расчет)
+                                        </label>
+                                        <div class="settings-packages-grid">
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">6/4</span>
+                                                    <span class="settings-package-desc">6 хороших, 4 брака</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-tobacco-6-4" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/шт</span>
+                                                </div>
+                                                <small class="settings-package-formula">(6 × хороший + 4 × брак) ÷ 10</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">7/3</span>
+                                                    <span class="settings-package-desc">7 хороших, 3 брака</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-tobacco-7-3" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/шт</span>
+                                                </div>
+                                                <small class="settings-package-formula">(7 × хороший + 3 × брак) ÷ 10</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">8/2</span>
+                                                    <span class="settings-package-desc">8 хороших, 2 брака</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-tobacco-8-2" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/шт</span>
+                                                </div>
+                                                <small class="settings-package-formula">(8 × хороший + 2 × брак) ÷ 10</small>
+                                            </div>
+                                            <div class="settings-package-card">
+                                                <div class="settings-package-header">
+                                                    <span class="settings-package-label">10/0</span>
+                                                    <span class="settings-package-desc">все хорошие</span>
+                                                </div>
+                                                <div class="settings-input-wrapper settings-input-readonly">
+                                                    <input type="text" id="settings-tobacco-10-0" class="settings-input" readonly>
+                                                    <span class="settings-input-suffix">₽/шт</span>
+                                                </div>
+                                                <small class="settings-package-formula">(10 × хороший) ÷ 10</small>
+                                            </div>
+                                        </div>
+                                        <small class="settings-hint">Общая себестоимость пакета делится на 10 (количество штук в пакете)</small>
+                                    </div>
+                                    
+                                    <div class="settings-actions">
+                                        <button type="button" class="settings-btn settings-btn-primary" onclick="saveTobaccoCostSettings()">
+                                            <i class="fas fa-save"></i>
+                                            <span>Сохранить настройки</span>
+                                        </button>
+                                        <button type="button" class="settings-btn settings-btn-secondary" onclick="resetTobaccoCostSettings()">
+                                            <i class="fas fa-undo"></i>
+                                            <span>Сбросить к умолчанию</span>
+                                        </button>
+                                    </div>
+                                </form>
+                                
+                                <div id="settings-tobacco-save-message" class="settings-alert" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Модальные окна -->
+    <!-- Модальное окно добавления категории -->
+    <div id="addCategoryModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Добавить категорию</h3>
+                <span class="close" onclick="closeModal('addCategoryModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addCategoryForm">
+                    <div class="form-group">
+                        <label for="categoryName">Название категории</label>
+                        <input type="text" id="categoryName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="categoryDescription">Описание</label>
+                        <textarea id="categoryDescription" class="form-control" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addCategoryModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="addCategory()">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления товара -->
+    <div id="addProductModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Добавить товар</h3>
+                <span class="close" onclick="closeModal('addProductModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addProductForm">
+                    <div class="form-group">
+                        <label for="productName">Название товара</label>
+                        <input type="text" id="productName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="productCategory">Категория</label>
+                        <select id="productCategory" class="form-control" required>
+                            <option value="">Выберите категорию</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="purchasePrice">Цена закупки (₽)</label>
+                            <input type="number" id="purchasePrice" class="form-control" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="salePrice">Цена продажи (₽)</label>
+                            <input type="number" id="salePrice" class="form-control" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="quantity">Количество на складе</label>
+                            <input type="number" id="quantity" class="form-control" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="minQuantity">Минимальный остаток</label>
+                            <input type="number" id="minQuantity" class="form-control" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="unit">Единица измерения</label>
+                        <select id="unit" class="form-control" required onchange="syncProductKgPieceFields()">
+                            <option value="шт">Штуки (шт)</option>
+                            <option value="кг">Килограммы (кг)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="kgPieceQuantityField" style="display: none;">
+                        <label for="kgPieceQuantity">Количество штук</label>
+                        <input type="number" id="kgPieceQuantity" class="form-control" step="1" min="0" placeholder="Например, 5">
+                        <small class="form-text text-muted">Для товаров в кг: сколько штук/пакетов лежит на складе.</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addProductModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="addProduct()">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно редактирования товара -->
+    <div id="editProductModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Редактировать товар</h3>
+                <span class="close" onclick="closeModal('editProductModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="editProductForm">
+                    <input type="hidden" id="editProductId">
+                    <div class="form-group">
+                        <label for="editProductName">Название товара</label>
+                        <input type="text" id="editProductName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editProductCategory">Категория</label>
+                        <select id="editProductCategory" class="form-control" required>
+                            <option value="">Выберите категорию</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="editPurchasePrice">Цена закупки (₽)</label>
+                            <input type="number" id="editPurchasePrice" class="form-control" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="editSalePrice">Цена продажи (₽)</label>
+                            <input type="number" id="editSalePrice" class="form-control" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="editQuantity">Количество на складе</label>
+                            <input type="number" id="editQuantity" class="form-control" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="editMinQuantity">Минимальный остаток</label>
+                            <input type="number" id="editMinQuantity" class="form-control" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="editUnit">Единица измерения</label>
+                        <select id="editUnit" class="form-control" required onchange="syncProductKgPieceFields('edit')">
+                            <option value="шт">Штуки (шт)</option>
+                            <option value="кг">Килограммы (кг)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="editKgPieceQuantityField" style="display: none;">
+                        <label for="editKgPieceQuantity">Количество штук</label>
+                        <input type="number" id="editKgPieceQuantity" class="form-control" step="1" min="0" placeholder="Например, 5">
+                        <small class="form-text text-muted">Текущий остаток в штуках/пакетах для товара в кг.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="addQuantity">Добавить количество</label>
+                        <input type="number" id="addQuantity" class="form-control" placeholder="Сколько добавить">
+                    </div>
+                    <div class="form-group" id="addKgPieceQuantityField" style="display: none;">
+                        <label for="addKgPieceQuantity">Добавить штук</label>
+                        <input type="number" id="addKgPieceQuantity" class="form-control" step="1" min="0" placeholder="Сколько штук добавить">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('editProductModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="updateProduct()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления клиента -->
+    <div id="addClientModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Добавить клиента</h3>
+                <span class="close" onclick="closeModal('addClientModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addClientForm">
+                    <div class="form-group">
+                        <label for="clientName">Имя клиента</label>
+                        <input type="text" id="clientName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clientPhone">Телефон</label>
+                        <input type="tel" id="clientPhone" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="clientEmail">Email</label>
+                        <input type="email" id="clientEmail" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="clientAddress">Адрес</label>
+                        <textarea id="clientAddress" class="form-control" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addClientModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="addClient()">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно редактирования клиента -->
+    <div id="editClientModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Редактировать клиента</h3>
+                <span class="close" onclick="closeModal('editClientModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="editClientForm">
+                    <input type="hidden" id="editClientId">
+                    <div class="form-group">
+                        <label for="editClientName">Имя клиента</label>
+                        <input type="text" id="editClientName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editClientPhone">Телефон</label>
+                        <input type="tel" id="editClientPhone" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="editClientEmail">Email</label>
+                        <input type="email" id="editClientEmail" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="editClientAddress">Адрес</label>
+                        <textarea id="editClientAddress" class="form-control" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('editClientModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="updateClient()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно создания накладной -->
+    <div id="createInvoiceModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Создать накладную</h3>
+                <span class="close" onclick="closeModal('createInvoiceModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="createInvoiceForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="invoiceClient">Клиент *</label>
+                            <div class="client-search-container">
+                                <div class="client-search-input-wrapper">
+                                    <input type="text" id="invoiceClientSearch" class="form-control client-search-input" placeholder="Выберите клиента или начните вводить для поиска..." autocomplete="off" required>
+                                    <button type="button" id="clearClientSearch" class="client-search-clear" title="Очистить выбор">×</button>
+                                </div>
+                                <div id="clientDropdown" class="client-dropdown"></div>
+                                <input type="hidden" id="invoiceClient" name="invoiceClient" required>
+                            </div>
+                        </div>
+                                            <div class="form-group">
+                        <label for="paymentType">Тип оплаты *</label>
+                        <div class="payment-type-container">
+                            <div class="payment-type-select" id="paymentTypeSelect" role="combobox" aria-haspopup="listbox" aria-expanded="false">
+                                <div class="payment-type-display" tabindex="0" aria-label="Выберите тип оплаты">
+                                    <i class="fas fa-credit-card"></i>
+                                    <span>Выберите тип оплаты</span>
+                                    <i class="fas fa-chevron-down payment-type-arrow"></i>
+                                </div>
+                                <div class="payment-type-dropdown" role="listbox">
+                                    <div class="payment-type-option" data-value="cash" role="option" tabindex="-1">
+                                        <div class="payment-type-icon">
+                                            <i class="fas fa-money-bill-wave"></i>
+                                        </div>
+                                        <div class="payment-type-info">
+                                            <div class="payment-type-name">Наличными</div>
+                                            <div class="payment-type-desc">Оплата наличными деньгами</div>
+                                        </div>
+                                        <div class="payment-type-check">
+                                            <i class="fas fa-check"></i>
+                                        </div>
+                                    </div>
+                                    <div class="payment-type-option" data-value="debt" role="option" tabindex="-1">
+                                        <div class="payment-type-icon">
+                                            <i class="fas fa-hand-holding-usd"></i>
+                                        </div>
+                                        <div class="payment-type-info">
+                                            <div class="payment-type-name">В долг</div>
+                                            <div class="payment-type-desc">Оплата в рассрочку</div>
+                                        </div>
+                                        <div class="payment-type-check">
+                                            <i class="fas fa-check"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="paymentType" name="paymentType" required>
+                        </div>
+                    </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="invoiceNotes">Примечания</label>
+                        <textarea id="invoiceNotes" class="form-control" rows="3"></textarea>
+                    </div>
+                    <div class="invoice-items">
+                        <h4>Товары</h4>
+                        <div id="invoice-items-list">
+                            <!-- Товары накладной будут добавляться динамически -->
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="addInvoiceItem()">
+                            <i class="fas fa-plus"></i> Добавить товар
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <div class="invoice-total">
+                    <strong>Итого: <span id="invoice-total">0 ₽</span></strong>
+                </div>
+                <div class="modal-buttons">
+                    <button class="btn btn-secondary" onclick="closeModal('createInvoiceModal')">Отмена</button>
+                    <button class="btn btn-primary" onclick="createInvoiceWithValidation()">Создать накладную</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно редактирования накладной -->
+    <div id="editInvoiceModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Редактировать накладную</h3>
+                <span class="close" onclick="closeModal('editInvoiceModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="editInvoiceForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="editInvoiceClient">Клиент *</label>
+                            <div class="client-search-container">
+                                <div class="client-search-input-wrapper">
+                                    <input type="text" id="editInvoiceClientSearch" class="form-control client-search-input" placeholder="Выберите клиента или начните вводить для поиска..." autocomplete="off" required>
+                                    <button type="button" id="clearEditClientSearch" class="client-search-clear" title="Очистить выбор">×</button>
+                                </div>
+                                <div id="editClientDropdown" class="client-dropdown"></div>
+                                <input type="hidden" id="editInvoiceClient" name="editInvoiceClient" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="editPaymentType">Тип оплаты *</label>
+                            <div class="payment-type-container">
+                                <div class="payment-type-select" id="editPaymentTypeSelect" role="combobox" aria-haspopup="listbox" aria-expanded="false">
+                                    <div class="payment-type-display" tabindex="0" aria-label="Выберите тип оплаты">
+                                        <i class="fas fa-credit-card"></i>
+                                        <span>Выберите тип оплаты</span>
+                                        <i class="fas fa-chevron-down payment-type-arrow"></i>
+                                    </div>
+                                    <div class="payment-type-dropdown" role="listbox">
+                                        <div class="payment-type-option" data-value="cash" role="option" tabindex="-1">
+                                            <div class="payment-type-icon">
+                                                <i class="fas fa-money-bill-wave"></i>
+                                            </div>
+                                            <div class="payment-type-info">
+                                                <div class="payment-type-name">Наличными</div>
+                                                <div class="payment-type-desc">Оплата наличными деньгами</div>
+                                            </div>
+                                            <div class="payment-type-check">
+                                                <i class="fas fa-check"></i>
+                                            </div>
+                                        </div>
+                                        <div class="payment-type-option" data-value="debt" role="option" tabindex="-1">
+                                            <div class="payment-type-icon">
+                                                <i class="fas fa-hand-holding-usd"></i>
+                                            </div>
+                                            <div class="payment-type-info">
+                                                <div class="payment-type-name">В долг</div>
+                                                <div class="payment-type-desc">Оплата в рассрочку</div>
+                                            </div>
+                                            <div class="payment-type-check">
+                                                <i class="fas fa-check"></i>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="editPaymentType" name="editPaymentType" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="editInvoiceNotes">Примечания</label>
+                        <textarea id="editInvoiceNotes" class="form-control" rows="3"></textarea>
+                    </div>
+                    <div class="invoice-items">
+                        <h4>Товары</h4>
+                        <div id="edit-invoice-items-list">
+                            <!-- Товары накладной будут добавляться динамически -->
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="addEditInvoiceItem()">
+                            <i class="fas fa-plus"></i> Добавить товар
+                        </button>
+                    </div>
+                    <input type="hidden" id="editInvoiceId" name="editInvoiceId">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <div class="invoice-total">
+                    <strong>Итого: <span id="edit-invoice-total">0 ₽</span></strong>
+                </div>
+                <div class="modal-buttons">
+                    <button class="btn btn-secondary" onclick="closeModal('editInvoiceModal')">Отмена</button>
+                    <button class="btn btn-primary" onclick="updateInvoiceWithValidation()">Сохранить изменения</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления долга -->
+    <div id="addDebtModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Новый долг</h3>
+                <span class="close" onclick="closeModal('addDebtModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addDebtForm">
+                    <div class="form-group">
+                        <label for="debtClientName">Имя клиента</label>
+                        <input type="text" id="debtClientName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtAmount">Сумма долга (₽)</label>
+                        <input type="number" id="debtAmount" class="form-control" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtDescription">Описание</label>
+                        <textarea id="debtDescription" class="form-control" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addDebtModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="addDebt()">Создать долг</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно расчета сдачи -->
+    <div id="changeCalculatorModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Наличные по накладной</h3>
+                <span class="close" onclick="closeModal('changeCalculatorModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="simple-cash-entry">
+                    <div id="cashEntrySummary" class="cash-entry-summary"></div>
+                    <div class="form-group">
+                        <label for="receivedAmount">Получено от клиента (₽)</label>
+                        <input type="number" id="receivedAmount" class="form-control cash-entry-input" step="0.01" min="0" placeholder="Например: 10000">
+                    </div>
+                    <div class="form-group">
+                        <label for="manualChangeAmount">Сдача клиенту (₽)</label>
+                        <input type="number" id="manualChangeAmount" class="form-control cash-entry-input" step="0.01" min="0" placeholder="Например: 500 или 0">
+                    </div>
+                    <div class="cash-entry-hint">
+                        Если сдачу не отдаёте или мелочь не считаете, укажите сдачу 0.
+                    </div>
+                    <div id="orderTotalDisplay" class="cash-entry-total">0 ₽</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('changeCalculatorModal')">Закрыть</button>
+                <button class="btn btn-success" onclick="saveChangeInfo()" id="saveChangeBtn">
+                    <i class="fas fa-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно приходной накладной -->
+    <div id="incomingReceiptModal" class="modal">
+        <div class="modal-content incoming-receipt-modal-content">
+            <div class="modal-header">
+                <h3 id="incomingReceiptModalTitle">Принять накладную поставщика</h3>
+                <span class="close" onclick="closeModal('incomingReceiptModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="incomingReceiptForm">
+                    <input type="hidden" id="incomingReceiptEditId">
+                    <div class="incoming-receipt-top">
+                        <div class="form-group">
+                            <label for="incomingReceiptDate">Дата</label>
+                            <input type="date" id="incomingReceiptDate" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="incomingSupplierName">Поставщик</label>
+                            <input type="text" id="incomingSupplierName" class="form-control" placeholder="Например: Поставщик табака">
+                        </div>
+                        <div class="form-group">
+                            <label for="incomingInvoiceNumber">Номер накладной</label>
+                            <input type="text" id="incomingInvoiceNumber" class="form-control" placeholder="Если есть номер">
+                        </div>
+                    </div>
+
+                    <div class="incoming-receipt-summary-card">
+                        <div>
+                            <span>Сумма накладной</span>
+                            <strong id="incomingReceiptComputedTotal">0 ₽</strong>
+                        </div>
+                    </div>
+
+                    <div id="incomingReceiptWarning" class="incoming-receipt-warning" style="display: none;"></div>
+
+                    <div class="incoming-receipt-list-header">
+                        <span>Что приняли сегодня</span>
+                        <small>Заполни только нужные позиции. Сумма накладной посчитается автоматически.</small>
+                    </div>
+
+                    <div id="incomingReceiptItemsGrid" class="incoming-receipt-grid"></div>
+
+                    <div class="form-group">
+                        <label for="incomingReceiptNote">Комментарий</label>
+                        <textarea id="incomingReceiptNote" class="form-control" rows="3" placeholder="Если нужно, укажите комментарий"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('incomingReceiptModal')">Отмена</button>
+                <button class="btn btn-primary" id="incomingReceiptSaveBtn" onclick="createIncomingReceipt()">Сохранить приход</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно оплаты поставщику -->
+    <div id="receiptPaymentModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Оплата поставщику</h3>
+                <span class="close" onclick="closeModal('receiptPaymentModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="receiptPaymentForm">
+                    <input type="hidden" id="receiptPaymentId">
+                    <input type="hidden" id="receiptPaymentMode" value="single">
+                    <div id="receiptPaymentSummary" class="incoming-hint"></div>
+                    <div class="form-group">
+                        <label for="receiptPaymentAmount">Сколько оплачено (₽)</label>
+                        <input type="number" id="receiptPaymentAmount" class="form-control" min="0" step="0.01" placeholder="Например: 5000">
+                    </div>
+                    <div class="form-group">
+                        <label for="receiptPaymentWallet">Откуда оплатили</label>
+                        <select id="receiptPaymentWallet" class="form-control" data-money-wallet-select data-default-wallet="sasha_cash"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="receiptPaymentNote">Комментарий к оплате</label>
+                        <textarea id="receiptPaymentNote" class="form-control" rows="3" placeholder="Например: оплатил половину накладной"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('receiptPaymentModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="saveReceiptPayment()">Сохранить оплату</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно управления долгом -->
+    <div id="manageDebtModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Управление долгом</h3>
+                <span class="close" onclick="closeModal('manageDebtModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="debt-info">
+                    <!-- Информация о долге будет добавляться динамически -->
+                </div>
+                <div class="debt-actions">
+                    <div class="form-group">
+                        <label for="debtPaymentAmount">Сумма оплаты</label>
+                        <input type="number" id="debtPaymentAmount" class="form-control" step="0.01" min="0" placeholder="Сколько клиент оплатил">
+                        <small style="color: #7f8c8d; font-size: 12px;">Можно принять часть суммы, остаток останется долгом</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPaymentMethod">Куда пришли деньги</label>
+                        <select id="debtPaymentMethod" class="form-control">
+                            <option value="cash">Наличка в кассу</option>
+                            <option value="card">Карта / банк</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPaymentNote">Комментарий к оплате</label>
+                        <textarea id="debtPaymentNote" class="form-control" rows="2" placeholder="Например: клиент закрыл часть долга"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtChangeAmount">Сколько прибавить или убрать</label>
+                        <input type="number" id="debtChangeAmount" class="form-control" step="0.01" placeholder="Например: 500 или -500">
+                        <small style="color: #7f8c8d; font-size: 12px;">Плюс добавит к долгу, минус уменьшит долг</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtComment">Что произошло</label>
+                        <textarea id="debtComment" class="form-control" rows="2" placeholder="Введите комментарий к долгу"></textarea>
+                        <small style="color: #7f8c8d; font-size: 12px;">Можно оставить только комментарий без изменения суммы</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('manageDebtModal')">Отмена</button>
+                <button class="btn btn-danger" onclick="deleteCurrentDebt()">Удалить долг</button>
+                <button class="btn btn-warning" onclick="changeDebtAmount()">Сохранить изменение</button>
+                <button class="btn btn-success" onclick="payOffDebt(false)">Принять оплату</button>
+                <button class="btn btn-primary" onclick="payOffDebt(true)">Погасить полностью</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно персональных цен -->
+    <div id="personalPricesModal" class="modal">
+        <div class="modal-content modal-extra-large">
+            <div class="modal-header">
+                <h3>Персональные цены для клиента</h3>
+                <span class="close" onclick="closeModal('personalPricesModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="personal-prices-content">
+                    <!-- Содержимое будет добавляться динамически -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('personalPricesModal')">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно редактирования записи персональных цен -->
+    <div id="editPersonalPriceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Редактировать запись продажи</h3>
+                <span class="close" onclick="closeModal('editPersonalPriceModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="editPersonalPriceForm">
+                    <div class="form-group">
+                        <label>Товар:</label>
+                        <input type="text" id="editProductName" class="form-control" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Тип табака:</label>
+                        <input type="text" id="editTobaccoType" class="form-control" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Цена за единицу:</label>
+                        <input type="text" id="editPrice" class="form-control" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="editQuantity">Количество:</label>
+                        <input type="number" id="editQuantity" class="form-control" step="0.01" min="0" required>
+                        <small class="form-text text-muted">Введите новое количество или используйте кнопки для корректировки</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Быстрые действия:</label>
+                        <div class="quick-actions-buttons">
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="adjustQuantity(-1)">
+                                <i class="fas fa-minus"></i> -1
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="adjustQuantity(-5)">
+                                <i class="fas fa-minus"></i> -5
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="adjustQuantity(-10)">
+                                <i class="fas fa-minus"></i> -10
+                            </button>
+                            <button type="button" class="btn btn-outline-success btn-sm" onclick="adjustQuantity(1)">
+                                <i class="fas fa-plus"></i> +1
+                            </button>
+                            <button type="button" class="btn btn-outline-success btn-sm" onclick="adjustQuantity(5)">
+                                <i class="fas fa-plus"></i> +5
+                            </button>
+                            <button type="button" class="btn btn-outline-success btn-sm" onclick="adjustQuantity(10)">
+                                <i class="fas fa-plus"></i> +10
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('editPersonalPriceModal')">Отмена</button>
+                <button class="btn btn-primary" onclick="savePersonalPriceEdit()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        window.loadSupabaseFallback = function() {
+            if (window.supabase || window.__supabaseFallbackLoading) return;
+            window.__supabaseFallbackLoading = true;
+            var script = document.createElement('script');
+            script.src = 'https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+            document.head.appendChild(script);
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" onerror="loadSupabaseFallback()"></script>
+    <script>
+        setTimeout(function() {
+            if (!window.supabase) loadSupabaseFallback();
+        }, 0);
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <script src="script.js"></script>
+</body>
+</html> 

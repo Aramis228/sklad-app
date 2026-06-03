@@ -1,0 +1,4 @@
+warehouse-phone-sync-settings-*.json
+warehouse-full-backup-*.json
+warehouse-shift-*.json
+.DS_Store

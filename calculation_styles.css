@@ -1,0 +1,174 @@
+
+/* ==================== СТИЛИ ДЛЯ РАЗДЕЛА "РАСЧЁТ" ==================== */
+
+/* Описание раздела */
+.calculation-description {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    color: #0369a1;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.calculation-description p {
+    margin: 0;
+}
+
+/* Таблица расчётов */
+.calculation-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.calculation-table thead th {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    color: #1e293b;
+    font-weight: 600;
+    padding: 16px 12px;
+    text-align: left;
+    border-bottom: 2px solid #e2e8f0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.calculation-table thead th.numeric {
+    text-align: right;
+}
+
+.calculation-table tbody tr {
+    background: #ffffff;
+    transition: all 0.2s ease;
+}
+
+.calculation-table tbody tr:hover {
+    background: #f8fafc;
+    transform: translateX(2px);
+}
+
+.calculation-table tbody td {
+    padding: 20px 12px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: middle;
+}
+
+.calculation-table tbody td:first-child {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.calculation-table tbody td small {
+    display: block;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 4px;
+}
+
+.calculation-table tbody td.numeric {
+    text-align: right;
+    font-weight: 600;
+    color: #334155;
+}
+
+/* Поля ввода в таблице */
+.calculation-input {
+    width: 120px;
+    padding: 10px 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: right;
+    transition: all 0.2s ease;
+    background: #ffffff;
+}
+
+.calculation-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    background: #f0f9ff;
+}
+
+.calculation-input::placeholder {
+    color: #cbd5e1;
+    font-weight: 400;
+}
+
+/* Итоговая строка */
+.calculation-totals {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-top: 3px solid #3b82f6;
+}
+
+.calculation-totals tr {
+    background: transparent !important;
+}
+
+.calculation-totals td {
+    padding: 16px 12px;
+    font-weight: 700;
+    color: #1e293b;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.calculation-totals td.numeric {
+    text-align: right;
+}
+
+/* Строка средней маржи */
+.average-margin-row {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+}
+
+.average-margin-row td {
+    color: #065f46;
+    font-size: 16px;
+    border-bottom: none !important;
+}
+
+/* Адаптивность */
+@media (max-width: 1200px) {
+    .calculation-input {
+        width: 100px;
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+    
+    .calculation-table thead th,
+    .calculation-table tbody td {
+        padding: 12px 8px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 768px) {
+    .calculation-table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .calculation-input {
+        width: 90px;
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    
+    .calculation-table thead th,
+    .calculation-table tbody td {
+        padding: 10px 6px;
+        font-size: 11px;
+    }
+    
+    .calculation-description {
+        padding: 12px 16px;
+        font-size: 13px;
+    }
+}
+
