@@ -18989,7 +18989,7 @@ function getRoastCostSettings() {
 
 // Сохранение настроек себестоимости жарки в localStorage
 function saveRoastCostSettingsToStorage(settings) {
-    localStorage.setItem('roastCostSettings', JSON.stringify(settings));
+    saveData('roastCostSettings', settings);
 }
 
 // Получение себестоимости хорошей жарки
@@ -19127,6 +19127,7 @@ function resetRoastCostSettings() {
     }
     
     localStorage.removeItem('roastCostSettings');
+    scheduleCloudSync();
     loadRoastCostSettings();
     
     const messageDiv = document.getElementById('settings-save-message');
@@ -19166,7 +19167,7 @@ function getTobaccoCostSettings() {
 
 // Сохранение настроек себестоимости табака в localStorage
 function saveTobaccoCostSettingsToStorage(settings) {
-    localStorage.setItem('tobaccoCostSettings', JSON.stringify(settings));
+    saveData('tobaccoCostSettings', settings);
 }
 
 // Получение себестоимости хорошего табака
@@ -19283,6 +19284,7 @@ function resetTobaccoCostSettings() {
     }
     
     localStorage.removeItem('tobaccoCostSettings');
+    scheduleCloudSync();
     loadTobaccoCostSettings();
     
     const messageDiv = document.getElementById('settings-tobacco-save-message');
@@ -19731,7 +19733,8 @@ function renderAuthState() {
     }
 
     if (container) {
-        container.style.display = authenticated ? 'flex' : 'none';
+        const mobileLayout = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches;
+        container.style.display = authenticated ? (mobileLayout ? 'block' : 'flex') : 'none';
     }
 
     if (sidebarName) {
