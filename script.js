@@ -2210,28 +2210,83 @@ function adjustProductStockByInvoiceItem(product, item, direction) {
     }
 }
 
-function getWarehouseValueByUnifiedStock() {
-    const state = calculateIncomingInventoryState(getTodayDateKey());
-    const tobaccoStock = getTobaccoStockPiecesFromState(state.categories?.tobacco || {});
-    const roastState = state.categories?.roast || {};
+function getRoastAverageKgCostFromState(roastState = {}) {
     const roastKg = roastState.kg || {};
     const roastReceivedKg = Math.max(0, Number(roastKg.received) || 0);
     const roastReceivedValue = (Math.max(0, Number(roastKg.receivedGood) || 0) * getCostGood())
         + (Math.max(0, Number(roastKg.receivedDefect) || 0) * getCostDefect());
-    const roastAverageKgCost = roastReceivedKg > 0 ? roastReceivedValue / roastReceivedKg : 0;
-    const controlledStockValue =
-        (Math.max(0, Number(tobaccoStock.good) || 0) * getTobaccoCostGood())
-        + (Math.max(0, Number(tobaccoStock.defect) || 0) * getTobaccoCostDefect())
-        + (Math.max(0, Number(roastKg.remaining) || 0) * roastAverageKgCost);
 
-    const regularProductsValue = products.reduce((sum, product) => {
-        if (isTobaccoProduct(product) || isSmallDefectProduct(product) || isRoastProduct(product) || isBigDefectProduct(product)) {
-            return sum;
+    return roastReceivedKg > 0 ? roastReceivedValue / roastReceivedKg : 0;
+}
+
+function getRegularProductStockValue(product, inventoryState = null) {
+    if (!product || isCoreIncomingProduct(product)) {
+        return 0;
+    }
+
+    const stock = getProductStockDisplay(product, inventoryState);
+    const quantity = Math.max(0, Number(stock.quantity) || 0);
+    const purchasePrice = Math.max(0, Number(product.purchasePrice) || 0);
+
+    return quantity * purchasePrice;
+}
+
+function getWarehouseValueBreakdownByUnifiedStock(inventoryState = null) {
+    const state = inventoryState || calculateIncomingInventoryState(getTodayDateKey());
+    const tobaccoStock = getTobaccoStockPiecesFromState(state.categories?.tobacco || {});
+    const roastState = state.categories?.roast || {};
+    const roastKg = roastState.kg || {};
+    const roastAverageKgCost = getRoastAverageKgCostFromState(roastState);
+    const tobaccoValue = (Math.max(0, Number(tobaccoStock.good) || 0) * getTobaccoCostGood())
+        + (Math.max(0, Number(tobaccoStock.defect) || 0) * getTobaccoCostDefect());
+    const roastValue = Math.max(0, Number(roastKg.remaining) || 0) * roastAverageKgCost;
+    const regularProducts = products
+        .filter(product => !isCoreIncomingProduct(product))
+        .map(product => {
+            const stock = getProductStockDisplay(product, state);
+            const value = getRegularProductStockValue(product, state);
+
+            return {
+                id: product.id,
+                name: product.name || 'Товар',
+                unit: stock.unit || product.unit || 'шт',
+                quantity: Math.max(0, Number(stock.quantity) || 0),
+                pieces: getProductPieceQuantity(product),
+                purchasePrice: Math.max(0, Number(product.purchasePrice) || 0),
+                value
+            };
+        });
+    const regularProductsValue = regularProducts.reduce((sum, product) => sum + product.value, 0);
+
+    return {
+        total: tobaccoValue + roastValue + regularProductsValue,
+        tobacco: {
+            goodPieces: Math.max(0, Number(tobaccoStock.good) || 0),
+            defectPieces: Math.max(0, Number(tobaccoStock.defect) || 0),
+            value: tobaccoValue
+        },
+        roast: {
+            kg: Math.max(0, Number(roastKg.remaining) || 0),
+            averageKgCost: roastAverageKgCost,
+            value: roastValue
+        },
+        regular: {
+            products: regularProducts,
+            value: regularProductsValue
         }
-        return sum + ((Number(product.quantity) || 0) * (Number(product.purchasePrice) || 0));
-    }, 0);
+    };
+}
 
-    return controlledStockValue + regularProductsValue;
+function getWarehouseValueByUnifiedStock() {
+    return getWarehouseValueBreakdownByUnifiedStock().total;
+}
+
+function getWarehouseValueSummaryText(breakdown = getWarehouseValueBreakdownByUnifiedStock()) {
+    return [
+        `Табак ${formatCurrency(breakdown.tobacco?.value || 0)}`,
+        `Жарка ${formatCurrency(breakdown.roast?.value || 0)}`,
+        `Остальные ${formatCurrency(breakdown.regular?.value || 0)}`
+    ].join(' • ');
 }
 
 function isKgUnit(unit) {
@@ -7351,7 +7406,8 @@ function renderDashboardInventoryOverview() {
         tobacco: Number(tobaccoState.openedRemaining?.total) || 0,
         roast: Number(roastState.openedRemaining?.total) || 0
     };
-    const warehouseValue = getWarehouseValueByUnifiedStock();
+    const warehouseValueBreakdown = getWarehouseValueBreakdownByUnifiedStock(state);
+    const warehouseValue = warehouseValueBreakdown.total;
     const tobaccoPackBreakdown = getPackBreakdownWithOpenedText(tobaccoState.finishedRemaining || {}, tobaccoState.openedRemaining || {}, getTobaccoTypeLabel);
     const roastPackBreakdown = getPackBreakdownWithOpenedText(roastState.finishedRemaining || {}, roastState.openedRemaining || {}, getRoastTypeLabel);
     const tobaccoSoldBreakdown = getTobaccoPackBreakdownText(salesToday.tobacco || {});
@@ -7436,7 +7492,7 @@ function renderDashboardInventoryOverview() {
                 <div>
                     <span>Склад на ${formatDateShort(getTodayDateKey())}</span>
                     <strong>${formatCurrency(warehouseValue)}</strong>
-                    <small>Стоимость товара по закупке. Долг поставщику здесь не прибавляется.</small>
+                    <small>${escapeHtml(getWarehouseValueSummaryText(warehouseValueBreakdown))}. Долг поставщику здесь не прибавляется.</small>
                 </div>
                 <div class="warehouse-hero-actions">
                     <span class="status-chip ${inventoryStatusClass}">${inventoryStatusText}</span>
@@ -7545,7 +7601,9 @@ function renderDashboardInventoryOverview() {
                             const sales = row.sales;
                             const categoryName = getProductCategoryName(product) || product.category || 'Товар';
                             const soldPiecesText = (Number(sales.pieces) || 0) > 0 ? `${formatQuantity(sales.pieces, 'шт')} шт` : '';
+                            const stockValue = getRegularProductStockValue(product, state);
                             const noteParts = [
+                                `Себестоимость: ${formatCurrency(stockValue)}`,
                                 soldPiecesText ? `Продано штук: ${soldPiecesText}` : ''
                             ].filter(Boolean);
                             return `
@@ -14853,9 +14911,10 @@ function showDataAnalytics() {
     const totalReports = reports.length;
     
     // Статистика по товарам
-    const productsWithStock = products.filter(p => p.quantity > 0).length;
-    const productsOutOfStock = products.filter(p => p.quantity === 0).length;
-    const totalStockValue = products.reduce((sum, p) => sum + (p.quantity * p.purchasePrice), 0);
+    const inventoryState = calculateIncomingInventoryState(getTodayDateKey());
+    const productsWithStock = products.filter(product => (Number(getProductStockDisplay(product, inventoryState).quantity) || 0) > 0).length;
+    const productsOutOfStock = Math.max(0, products.length - productsWithStock);
+    const totalStockValue = getWarehouseValueByUnifiedStock();
     
     // Статистика по накладным
     const totalSales = invoices.reduce((sum, inv) => sum + inv.total, 0);
