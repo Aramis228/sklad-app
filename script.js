@@ -21960,11 +21960,9 @@ function startCloudSyncPolling() {
 }
 
 function createSupabaseDataClient(config) {
-    const syncClientInfo = `warehouse-sync:${config.syncKey}`;
     const headers = {
         apikey: config.publishableKey,
-        Authorization: `Bearer ${config.publishableKey}`,
-        'x-client-info': syncClientInfo
+        Authorization: `Bearer ${config.publishableKey}`
     };
 
     if (window.supabase?.createClient) {
@@ -21976,29 +21974,28 @@ function createSupabaseDataClient(config) {
                     persistSession: false,
                     autoRefreshToken: false,
                     detectSessionInUrl: false
-                },
-                global: { headers }
+                }
             }
         );
 
         return {
             async selectState(workspaceId) {
-                const { data, error } = await client
-                    .from(config.tableName)
-                    .select('payload,payload_updated_at')
-                    .eq('workspace_id', workspaceId)
-                    .maybeSingle();
+                const { data, error } = await client.rpc('warehouse_sync_pull', {
+                    p_workspace_id: workspaceId,
+                    p_sync_key: config.syncKey
+                });
                 if (error) throw error;
-                return data;
+                return Array.isArray(data) ? (data[0] || null) : data;
             },
             async upsertState(row) {
-                const { data, error } = await client
-                    .from(config.tableName)
-                    .upsert(row, { onConflict: 'workspace_id' })
-                    .select('payload_updated_at')
-                    .single();
+                const { data, error } = await client.rpc('warehouse_sync_push', {
+                    p_workspace_id: row.workspace_id,
+                    p_sync_key: config.syncKey,
+                    p_payload: row.payload || {},
+                    p_client_id: row.client_id || null
+                });
                 if (error) throw error;
-                return data;
+                return Array.isArray(data) ? (data[0] || null) : data;
             }
         };
     }
@@ -22007,12 +22004,19 @@ function createSupabaseDataClient(config) {
         throw new Error('Supabase SDK не загружен и fetch недоступен');
     }
 
-    const endpoint = `${config.url}/rest/v1/${encodeURIComponent(config.tableName)}`;
+    const rpcEndpoint = `${config.url}/rest/v1/rpc`;
     return {
         async selectState(workspaceId) {
-            const response = await window.fetch(`${endpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=payload,payload_updated_at`, {
-                method: 'GET',
-                headers
+            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_pull`, {
+                method: 'POST',
+                headers: {
+                    ...headers,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    p_workspace_id: workspaceId,
+                    p_sync_key: config.syncKey
+                })
             });
             if (!response.ok) {
                 throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
@@ -22021,14 +22025,18 @@ function createSupabaseDataClient(config) {
             return Array.isArray(rows) ? (rows[0] || null) : null;
         },
         async upsertState(row) {
-            const response = await window.fetch(`${endpoint}?on_conflict=workspace_id&select=payload_updated_at`, {
+            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_push`, {
                 method: 'POST',
                 headers: {
                     ...headers,
-                    'Content-Type': 'application/json',
-                    Prefer: 'resolution=merge-duplicates,return=representation'
+                    'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(row)
+                body: JSON.stringify({
+                    p_workspace_id: row.workspace_id,
+                    p_sync_key: config.syncKey,
+                    p_payload: row.payload || {},
+                    p_client_id: row.client_id || null
+                })
             });
             if (!response.ok) {
                 throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
