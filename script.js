@@ -93,7 +93,9 @@ const MONEY_EXPENSE_CATEGORIES = [
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://zrbwkgjbparbeddpaymc.supabase.co';
 const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_O9rA0lWG2r2MZqhCnnRzfA_e3vuvEGd';
 const DEFAULT_SUPABASE_SYNC_TABLE = 'warehouse_sync_state';
-const CLOUD_SYNC_POLL_INTERVAL_MS = 20000;
+const CLOUD_SYNC_CONFIG_BACKUP_KEY = 'warehouseCloudSyncConfigBackup';
+const CLOUD_SYNC_POLL_INTERVAL_MS = 2500;
+const CLOUD_SYNC_PUSH_DEBOUNCE_MS = 250;
 const DEFAULT_CLOUD_SYNC_CONFIG = {
     enabled: false,
     provider: 'supabase',
@@ -120,6 +122,7 @@ const DEFAULT_CLOUD_SYNC_CONFIG = {
 let cloudSyncState = {
     ready: false,
     syncing: false,
+    pulling: false,
     pendingTimer: null,
     pollTimer: null,
     db: null,
@@ -128,6 +131,7 @@ let cloudSyncState = {
     unsubscribe: null,
     applyingRemote: false,
     lastRemoteUpdatedAt: '',
+    lastAppliedRemoteUpdatedAt: '',
     lastError: ''
 };
 
@@ -2219,6 +2223,19 @@ function getRoastAverageKgCostFromState(roastState = {}) {
     return roastReceivedKg > 0 ? roastReceivedValue / roastReceivedKg : 0;
 }
 
+function getRoastCurrentKgCostFromState(roastState = {}) {
+    const roastStock = getRoastStockPiecesFromState(roastState);
+    const goodPieces = Math.max(0, Number(roastStock.good) || 0);
+    const defectPieces = Math.max(0, Number(roastStock.defect) || 0);
+    const totalPieces = goodPieces + defectPieces;
+
+    if (totalPieces > 0) {
+        return ((goodPieces * getCostGood()) + (defectPieces * getCostDefect())) / totalPieces;
+    }
+
+    return getRoastAverageKgCostFromState(roastState);
+}
+
 function getRegularProductStockValue(product, inventoryState = null) {
     if (!product || isCoreIncomingProduct(product)) {
         return 0;
@@ -2236,10 +2253,10 @@ function getWarehouseValueBreakdownByUnifiedStock(inventoryState = null) {
     const tobaccoStock = getTobaccoStockPiecesFromState(state.categories?.tobacco || {});
     const roastState = state.categories?.roast || {};
     const roastKg = roastState.kg || {};
-    const roastAverageKgCost = getRoastAverageKgCostFromState(roastState);
+    const roastKgCost = getRoastCurrentKgCostFromState(roastState);
     const tobaccoValue = (Math.max(0, Number(tobaccoStock.good) || 0) * getTobaccoCostGood())
         + (Math.max(0, Number(tobaccoStock.defect) || 0) * getTobaccoCostDefect());
-    const roastValue = Math.max(0, Number(roastKg.remaining) || 0) * roastAverageKgCost;
+    const roastValue = Math.max(0, Number(roastKg.remaining) || 0) * roastKgCost;
     const regularProducts = products
         .filter(product => !isCoreIncomingProduct(product))
         .map(product => {
@@ -2267,7 +2284,7 @@ function getWarehouseValueBreakdownByUnifiedStock(inventoryState = null) {
         },
         roast: {
             kg: Math.max(0, Number(roastKg.remaining) || 0),
-            averageKgCost: roastAverageKgCost,
+            averageKgCost: roastKgCost,
             value: roastValue
         },
         regular: {
@@ -3060,8 +3077,7 @@ function getCashControlSettings() {
 }
 
 function saveCashControlSettings(settings) {
-    localStorage.setItem('cashControlSettings', JSON.stringify(settings));
-    scheduleCloudSync();
+    saveData('cashControlSettings', settings);
 }
 
 function getConfiguredShiftCashToLeave() {
@@ -5431,10 +5447,20 @@ function renderIncomingPaymentHistory(receipt) {
     `;
 }
 
+function preventNumberInputWheelChanges() {
+    document.addEventListener('wheel', event => {
+        const target = event.target;
+        if (target instanceof HTMLInputElement && target.type === 'number' && document.activeElement === target) {
+            event.preventDefault();
+        }
+    }, { passive: false });
+}
+
 // Инициализация приложения
 document.addEventListener('DOMContentLoaded', async function() {
     registerServiceWorker();
     await initializePersistentStorage();
+    preventNumberInputWheelChanges();
 
     // Мигрируем старые отчеты (конвертируем ID клиентов в имена)
     migrateOldReports();
@@ -5452,6 +5478,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeAuth();
     initializeAccessControl();
     renderControlCenter();
+    initializeCloudSyncAutoRefresh();
     initializeCloudSync();
     
     // Инициализируем поиск клиентов
@@ -6243,10 +6270,7 @@ function clearAllReports() {
             
             // Сохраняем изменения в localStorage
             saveData('reports', reports);
-            
-            // Дополнительно очищаем старый localStorage если есть старые данные
-            localStorage.removeItem('reports');
-            
+
             // Обновляем отчет
             generateReport();
             
@@ -6871,6 +6895,12 @@ function applyImportedAppState(rawState, options = {}) {
     saveData('openedStockEvents', openedStockEvents);
 
     EXTRA_STORAGE_FIELDS.forEach(key => {
+        if (LOCAL_ONLY_KEYS.has(key) && state[key] === undefined) {
+            return;
+        }
+        if (key === 'cloudSyncConfig' && (state[key] === undefined || state[key] === null)) {
+            return;
+        }
         if (state[key] !== undefined || strictReplace) {
             restoreOptionalStorageField(state, key);
         }
@@ -8011,10 +8041,7 @@ function deleteCategory(categoryId) {
         // Удаляем категорию из массива
         categories = categories.filter(c => c.id !== categoryId);
         saveData('categories', categories);
-        
-        // Дополнительно очищаем старый localStorage
-        localStorage.removeItem('categories');
-        
+
         loadCategories();
         loadCategoriesToSelects();
         loadProducts();
@@ -8415,10 +8442,7 @@ function deleteProduct(productId) {
         // Удаляем товар из массива
         products = products.filter(p => p.id !== productId);
         saveData('products', products);
-        
-        // Дополнительно очищаем старый localStorage
-        localStorage.removeItem('products');
-        
+
         loadProducts();
         updateStats();
     }
@@ -8700,10 +8724,7 @@ function deleteClient(clientId) {
         // Удаляем клиента из массива
         clients = clients.filter(c => c.id !== clientId);
         saveData('clients', clients);
-        
-        // Дополнительно очищаем старый localStorage
-        localStorage.removeItem('clients');
-        
+
         loadClients();
         loadClientsToSelects();
     }
@@ -10642,8 +10663,6 @@ function deleteInvoice(invoiceId) {
         saveData('invoices', invoices);
         saveData('archivedInvoices', archivedInvoices);
 
-        // Дополнительно очищаем старый localStorage
-        localStorage.removeItem('invoices');
         logActivity('delete_invoice', {
             invoiceId: invoiceId,
             total: invoice.total,
@@ -11041,8 +11060,7 @@ function saveCertificateDebtSettings(settings = {}) {
         weekdayClientIds
     };
 
-    localStorage.setItem(CERTIFICATE_DEBT_SETTINGS_KEY, JSON.stringify(normalized));
-    scheduleCloudSync();
+    saveData(CERTIFICATE_DEBT_SETTINGS_KEY, normalized);
     return normalized;
 }
 
@@ -12299,10 +12317,7 @@ function clearAllMovements() {
         // Полностью очищаем массив движений
         movements = [];
         saveData('movements', movements);
-        
-        // Дополнительно очищаем старый localStorage
-        localStorage.removeItem('movements');
-        
+
         loadMovements();
         loadDashboardData();
     }
@@ -14603,9 +14618,13 @@ async function clearAllLocalStorage() {
 // Функция для проверки и очистки "мусора" в localStorage
 function cleanupLocalStorage() {
     const keys = Object.keys(localStorage);
-    const validKeys = ['categories', 'products', 'clients', 'invoices', 'debts', 'movements', 'reports'];
-    // Не чистим персональные цены — они важны
-    validKeys.push('personalPrices');
+    const validKeys = [
+        ...APP_STATE_FIELDS,
+        ...EXTRA_STORAGE_FIELDS,
+        'securitySettings',
+        'sessionAccess',
+        CLOUD_SYNC_CONFIG_BACKUP_KEY
+    ];
     let cleanedCount = 0;
     
     keys.forEach(key => {
@@ -15060,7 +15079,7 @@ function showBackupHistory() {
         if (backupHistory.length > 10) {
             backupHistory.splice(0, backupHistory.length - 10);
         }
-        localStorage.setItem('backupHistory', JSON.stringify(backupHistory));
+        saveData('backupHistory', backupHistory);
     }
     
     let message = `📅 **История резервных копий**\n\n`;
@@ -15281,7 +15300,7 @@ function backupBeforeFix() {
         timestamp: new Date().toISOString()
     };
     
-    localStorage.setItem('debts_backup', JSON.stringify(backup));
+    saveData('debts_backup', backup);
     console.log('💾 Создана резервная копия перед исправлениями');
 }
 
@@ -15308,12 +15327,12 @@ function restoreFromBackup() {
 
 // Получить архив долгов из localStorage
 function getArchivedDebts() {
-    return JSON.parse(localStorage.getItem('archivedDebts') || '[]');
+    return readStorageJson('archivedDebts', []);
 }
 
 // Сохранить архив долгов
 function saveArchivedDebts(archivedDebts) {
-    localStorage.setItem('archivedDebts', JSON.stringify(archivedDebts));
+    saveData('archivedDebts', Array.isArray(archivedDebts) ? archivedDebts : []);
 }
 
 function getArchivedDebtDisplayAmount(debt) {
@@ -15367,7 +15386,7 @@ function restoreDebtFromArchive(debtId) {
 // Очистить архив долгов
 function clearArchivedDebts() {
     if (confirm('⚠️ ВНИМАНИЕ! Это действие нельзя отменить.\n\nВы уверены, что хотите полностью очистить архив долгов?\n\nВсе удаленные долги будут потеряны навсегда.')) {
-        localStorage.removeItem('archivedDebts');
+        saveData('archivedDebts', []);
         alert('🗑️ Архив долгов полностью очищен!');
         // Закрываем модальное окно архива
         const modal = document.querySelector('.modal.open');
@@ -17611,11 +17630,11 @@ function getInvoiceDateString(invoice) {
 }
 
 function readEarningsMarginMap() {
-    return JSON.parse(localStorage.getItem('earningsMargins') || '{}');
+    return readStorageJson('earningsMargins', {});
 }
 
 function writeEarningsMarginMap(map) {
-    localStorage.setItem('earningsMargins', JSON.stringify(map));
+    saveData('earningsMargins', map || {});
 }
 
 function loadEarnings() {
@@ -18902,7 +18921,7 @@ function getConfiguredShiftStartCash() {
 }
 
 function saveShiftCashSettingsToStorage(settings) {
-    localStorage.setItem('shiftCashSettings', JSON.stringify(settings));
+    saveData('shiftCashSettings', settings);
 }
 
 function updateShiftStartCashDisplay() {
@@ -18956,6 +18975,7 @@ function resetShiftCashSettings() {
     }
 
     localStorage.removeItem('shiftCashSettings');
+    scheduleCloudSync();
     loadShiftCashSettings();
     renderControlCenter();
 
@@ -19880,7 +19900,22 @@ function toggleSellerSimpleMode() {
 }
 
 function getCloudSyncConfig() {
-    const saved = JSON.parse(localStorage.getItem('cloudSyncConfig') || 'null');
+    let saved = null;
+    try {
+        saved = JSON.parse(localStorage.getItem('cloudSyncConfig') || 'null');
+    } catch (error) {
+        console.warn('Не удалось прочитать настройки облака:', error);
+    }
+    if (!saved) {
+        try {
+            saved = JSON.parse(localStorage.getItem(CLOUD_SYNC_CONFIG_BACKUP_KEY) || 'null');
+            if (saved) {
+                localStorage.setItem('cloudSyncConfig', JSON.stringify(saved));
+            }
+        } catch (error) {
+            console.warn('Не удалось восстановить настройки облака из резерва:', error);
+        }
+    }
     if (!saved) {
         return {
             ...DEFAULT_CLOUD_SYNC_CONFIG,
@@ -19905,7 +19940,9 @@ function getCloudSyncConfig() {
 }
 
 function saveCloudSyncConfig(config) {
-    localStorage.setItem('cloudSyncConfig', JSON.stringify(config));
+    const serialized = JSON.stringify(config);
+    localStorage.setItem('cloudSyncConfig', serialized);
+    localStorage.setItem(CLOUD_SYNC_CONFIG_BACKUP_KEY, serialized);
 }
 
 function hashPin(pin) {
@@ -21421,6 +21458,12 @@ function resetActivityLogFilters() {
     handleActivityLogFilterChange();
 }
 
+function shouldUseMobileAuditCards() {
+    return typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(max-width: 640px)').matches;
+}
+
 function renderActivityLogTable() {
     const container = document.getElementById('activity-log-preview');
     const countLabel = document.getElementById('audit-log-count');
@@ -21445,38 +21488,61 @@ function renderActivityLogTable() {
         return;
     }
 
-    container.innerHTML = `
-        <div class="table-responsive">
-            <table class="invoice-items-table audit-log-table">
-                <thead>
-                    <tr>
-                        <th>Дата</th>
-                        <th>Кто</th>
-                        <th>Раздел</th>
-                        <th>Действие</th>
-                        <th>Кратко</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${pageData.items.map(entry => `
+    if (shouldUseMobileAuditCards()) {
+        container.innerHTML = `
+            <div class="audit-mobile-list">
+                ${pageData.items.map(entry => `
+                    <article class="audit-mobile-card">
+                        <div class="audit-mobile-card-top">
+                            <strong>${escapeHtml(getActivityTitle(entry))}</strong>
+                            <span>${formatShortDateTime(entry.createdAt)}</span>
+                        </div>
+                        <div class="audit-mobile-card-meta">
+                            <span><i class="fas fa-user"></i> ${escapeHtml(entry.actor || 'Система')}</span>
+                            <span><i class="fas fa-folder-open"></i> ${escapeHtml(getActivityCategoryLabel(getActivityCategory(entry)))}</span>
+                        </div>
+                        <p>${escapeHtml(getActivitySummary(entry))}</p>
+                        <button class="btn btn-secondary btn-sm" onclick="showActivityEntryDetails('${entry.id}')">
+                            <i class="fas fa-eye"></i> Детали
+                        </button>
+                    </article>
+                `).join('')}
+            </div>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="invoice-items-table audit-log-table">
+                    <thead>
                         <tr>
-                            <td>${formatShortDateTime(entry.createdAt)}</td>
-                            <td>${escapeHtml(entry.actor || 'Система')}</td>
-                            <td>${escapeHtml(getActivityCategoryLabel(getActivityCategory(entry)))}</td>
-                            <td>${escapeHtml(getActivityTitle(entry))}</td>
-                            <td>${escapeHtml(getActivitySummary(entry))}</td>
-                            <td>
-                                <button class="btn btn-secondary btn-sm" onclick="showActivityEntryDetails('${entry.id}')">
-                                    <i class="fas fa-eye"></i> Детали
-                                </button>
-                            </td>
+                            <th>Дата</th>
+                            <th>Кто</th>
+                            <th>Раздел</th>
+                            <th>Действие</th>
+                            <th>Кратко</th>
+                            <th></th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
+                    </thead>
+                    <tbody>
+                        ${pageData.items.map(entry => `
+                            <tr>
+                                <td>${formatShortDateTime(entry.createdAt)}</td>
+                                <td>${escapeHtml(entry.actor || 'Система')}</td>
+                                <td>${escapeHtml(getActivityCategoryLabel(getActivityCategory(entry)))}</td>
+                                <td>${escapeHtml(getActivityTitle(entry))}</td>
+                                <td>${escapeHtml(getActivitySummary(entry))}</td>
+                                <td>
+                                    <button class="btn btn-secondary btn-sm" onclick="showActivityEntryDetails('${entry.id}')">
+                                        <i class="fas fa-eye"></i> Детали
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
 
     if (!pagination) return;
     if (filters.pageSize === 'all' || pageData.totalPages <= 1) {
@@ -22017,7 +22083,7 @@ function stopCloudSyncPolling() {
 function startCloudSyncPolling() {
     stopCloudSyncPolling();
     cloudSyncState.pollTimer = setInterval(() => {
-        pullCloudStateNow({ silent: true });
+        pullCloudStateNow({ silent: true, skipIfBusy: true });
     }, CLOUD_SYNC_POLL_INTERVAL_MS);
 }
 
@@ -22312,7 +22378,7 @@ function persistCloudPayloadLocally(payload) {
 
     Object.entries(mappings).forEach(([field, key]) => {
         if (payload[field] !== undefined) {
-            localStorage.setItem(key, JSON.stringify(payload[field]));
+            schedulePersistentWrite(key, payload[field]);
         }
     });
 }
@@ -22320,38 +22386,47 @@ function persistCloudPayloadLocally(payload) {
 function applyCloudPayload(payload) {
     if (!payload || cloudSyncState.applyingRemote) return;
 
+    const payloadUpdatedAt = payload.updatedAt || '';
+    if (payloadUpdatedAt && payloadUpdatedAt === cloudSyncState.lastAppliedRemoteUpdatedAt) {
+        return;
+    }
+
     cloudSyncState.applyingRemote = true;
-    categories = Array.isArray(payload.categories) ? payload.categories : categories;
-    products = Array.isArray(payload.products) ? payload.products : products;
-    clients = Array.isArray(payload.clients) ? payload.clients : clients;
-    invoices = Array.isArray(payload.invoices) ? payload.invoices : invoices;
-    archivedInvoices = Array.isArray(payload.archivedInvoices) ? payload.archivedInvoices.map(normalizeArchivedInvoice) : archivedInvoices;
-    debts = Array.isArray(payload.debts) ? payload.debts : debts;
-    movements = Array.isArray(payload.movements) ? payload.movements : movements;
-    reports = Array.isArray(payload.reports) ? payload.reports : reports;
-    personalPrices = Array.isArray(payload.personalPrices) ? payload.personalPrices : personalPrices;
-    shiftSessions = Array.isArray(payload.shiftSessions) ? payload.shiftSessions : shiftSessions;
-    debtPayments = Array.isArray(payload.debtPayments) ? payload.debtPayments : debtPayments;
-    moneyTransactions = Array.isArray(payload.moneyTransactions) ? payload.moneyTransactions.map(normalizeMoneyTransaction) : moneyTransactions;
-    activityLog = Array.isArray(payload.activityLog) ? payload.activityLog : activityLog;
-    incomingReceipts = Array.isArray(payload.incomingReceipts) ? payload.incomingReceipts.map(normalizeIncomingReceipt) : incomingReceipts;
-    archivedIncomingReceipts = Array.isArray(payload.archivedIncomingReceipts) ? payload.archivedIncomingReceipts.map(normalizeArchivedIncomingReceipt) : archivedIncomingReceipts;
-    initialStockEntries = Array.isArray(payload.initialStockEntries) ? payload.initialStockEntries.map(normalizeInitialStockEntry) : initialStockEntries;
-    supplierReturns = Array.isArray(payload.supplierReturns) ? payload.supplierReturns.map(normalizeSupplierReturn) : supplierReturns;
-    packageProductions = Array.isArray(payload.packageProductions) ? payload.packageProductions.map(normalizePackageProduction) : packageProductions;
-    openedStockEvents = Array.isArray(payload.openedStockEvents) ? payload.openedStockEvents.map(normalizeOpenedStockEvent) : openedStockEvents;
-    rebuildPartialSaleOpenedStockEvents();
-    EXTRA_STORAGE_FIELDS.forEach(key => {
-        if (LOCAL_ONLY_KEYS.has(key)) return;
-        if (payload[key] !== undefined) {
-            restoreOptionalStorageField(payload, key);
-        }
-    });
-    persistCloudPayloadLocally(payload);
-    autoCloseStaleOpenShift();
-    autoArchiveOldInvoices();
-    syncIncomingProductsStock();
-    cloudSyncState.applyingRemote = false;
+    try {
+        categories = Array.isArray(payload.categories) ? payload.categories : categories;
+        products = Array.isArray(payload.products) ? payload.products : products;
+        clients = Array.isArray(payload.clients) ? payload.clients : clients;
+        invoices = Array.isArray(payload.invoices) ? payload.invoices : invoices;
+        archivedInvoices = Array.isArray(payload.archivedInvoices) ? payload.archivedInvoices.map(normalizeArchivedInvoice) : archivedInvoices;
+        debts = Array.isArray(payload.debts) ? payload.debts : debts;
+        movements = Array.isArray(payload.movements) ? payload.movements : movements;
+        reports = Array.isArray(payload.reports) ? payload.reports : reports;
+        personalPrices = Array.isArray(payload.personalPrices) ? payload.personalPrices : personalPrices;
+        shiftSessions = Array.isArray(payload.shiftSessions) ? payload.shiftSessions : shiftSessions;
+        debtPayments = Array.isArray(payload.debtPayments) ? payload.debtPayments : debtPayments;
+        moneyTransactions = Array.isArray(payload.moneyTransactions) ? payload.moneyTransactions.map(normalizeMoneyTransaction) : moneyTransactions;
+        activityLog = Array.isArray(payload.activityLog) ? payload.activityLog : activityLog;
+        incomingReceipts = Array.isArray(payload.incomingReceipts) ? payload.incomingReceipts.map(normalizeIncomingReceipt) : incomingReceipts;
+        archivedIncomingReceipts = Array.isArray(payload.archivedIncomingReceipts) ? payload.archivedIncomingReceipts.map(normalizeArchivedIncomingReceipt) : archivedIncomingReceipts;
+        initialStockEntries = Array.isArray(payload.initialStockEntries) ? payload.initialStockEntries.map(normalizeInitialStockEntry) : initialStockEntries;
+        supplierReturns = Array.isArray(payload.supplierReturns) ? payload.supplierReturns.map(normalizeSupplierReturn) : supplierReturns;
+        packageProductions = Array.isArray(payload.packageProductions) ? payload.packageProductions.map(normalizePackageProduction) : packageProductions;
+        openedStockEvents = Array.isArray(payload.openedStockEvents) ? payload.openedStockEvents.map(normalizeOpenedStockEvent) : openedStockEvents;
+        rebuildPartialSaleOpenedStockEvents();
+        EXTRA_STORAGE_FIELDS.forEach(key => {
+            if (LOCAL_ONLY_KEYS.has(key)) return;
+            if (payload[key] !== undefined) {
+                restoreOptionalStorageField(payload, key);
+            }
+        });
+        persistCloudPayloadLocally(payload);
+        autoCloseStaleOpenShift();
+        autoArchiveOldInvoices();
+        syncIncomingProductsStock();
+        cloudSyncState.lastAppliedRemoteUpdatedAt = payloadUpdatedAt || cloudSyncState.lastAppliedRemoteUpdatedAt;
+    } finally {
+        cloudSyncState.applyingRemote = false;
+    }
 
     updateStats();
     loadDashboardData();
@@ -22375,7 +22450,7 @@ function scheduleCloudSync() {
 
     cloudSyncState.pendingTimer = setTimeout(() => {
         pushCloudStateNow();
-    }, 700);
+    }, CLOUD_SYNC_PUSH_DEBOUNCE_MS);
 }
 
 async function pushCloudStateNow() {
@@ -22435,6 +22510,9 @@ async function pullCloudStateNow(options = {}) {
     if (!hasValidCloudConfig(config) || (config.provider || 'supabase') !== 'supabase') {
         return null;
     }
+    if (cloudSyncState.pulling && options.skipIfBusy) {
+        return null;
+    }
 
     const supabaseConfig = normalizeSupabaseSyncConfig(config.supabase);
     if (!cloudSyncState.client) {
@@ -22443,6 +22521,7 @@ async function pullCloudStateNow(options = {}) {
     if (!cloudSyncState.client) return null;
 
     try {
+        cloudSyncState.pulling = true;
         if (!options.silent) {
             cloudSyncState.syncing = true;
             renderControlCenter();
@@ -22474,6 +22553,7 @@ async function pullCloudStateNow(options = {}) {
             cloudSyncState.syncing = false;
             renderControlCenter();
         }
+        cloudSyncState.pulling = false;
     }
 }
 
@@ -22495,6 +22575,26 @@ async function syncCloudNow() {
     }
 
     await pushCloudStateNow();
+}
+
+let cloudSyncAutoRefreshInitialized = false;
+
+function initializeCloudSyncAutoRefresh() {
+    if (cloudSyncAutoRefreshInitialized) return;
+    cloudSyncAutoRefreshInitialized = true;
+
+    const pullIfReady = () => {
+        if (!hasValidCloudConfig(getCloudSyncConfig())) return;
+        pullCloudStateNow({ silent: true, skipIfBusy: true });
+    };
+
+    window.addEventListener('focus', pullIfReady);
+    window.addEventListener('online', pullIfReady);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            pullIfReady();
+        }
+    });
 }
 
 function buildCloudSyncSettingsExport() {
