@@ -23,6 +23,7 @@ let sessionAccess = JSON.parse(localStorage.getItem('sessionAccess')) || { curre
 let shiftHistoryPage = 1;
 let moneyHistoryPage = 1;
 let auditLogPage = 1;
+let movementsPage = 1;
 
 const SHIFT_START_CASH = 7000;
 const SELLER_ALLOWED_TABS = ['clients', 'warehouse', 'shift', 'incoming', 'invoices', 'debts', 'reports', 'backup'];
@@ -96,6 +97,7 @@ const DEFAULT_SUPABASE_SYNC_TABLE = 'warehouse_sync_state';
 const CLOUD_SYNC_CONFIG_BACKUP_KEY = 'warehouseCloudSyncConfigBackup';
 const CLOUD_SYNC_POLL_INTERVAL_MS = 2500;
 const CLOUD_SYNC_PUSH_DEBOUNCE_MS = 250;
+const MOVEMENTS_PAGE_SIZE = 40;
 const DEFAULT_CLOUD_SYNC_CONFIG = {
     enabled: false,
     provider: 'supabase',
@@ -122,6 +124,7 @@ const DEFAULT_CLOUD_SYNC_CONFIG = {
 let cloudSyncState = {
     ready: false,
     syncing: false,
+    initializing: false,
     pulling: false,
     pendingTimer: null,
     pollTimer: null,
@@ -7290,6 +7293,90 @@ function initializeApp() {
     initRoastCalcOnce();
 }
 
+function showTabRenderError(targetPane, error) {
+    if (!targetPane) return;
+    const message = error?.message || 'Неизвестная ошибка';
+    const existing = targetPane.querySelector('.tab-render-error');
+    const html = `
+        <div class="tab-render-error">
+            <strong>Раздел не смог загрузиться</strong>
+            <span>${escapeHtml(message)}</span>
+            <button class="btn btn-secondary btn-sm" onclick="refreshCurrentVisibleTab()">
+                <i class="fas fa-rotate"></i> Повторить
+            </button>
+        </div>
+    `;
+    if (existing) {
+        existing.outerHTML = html;
+    } else {
+        targetPane.insertAdjacentHTML('afterbegin', html);
+    }
+}
+
+function renderTabContent(tabName, targetPane = document.getElementById(tabName)) {
+    try {
+        switch(tabName) {
+            case 'accounting':
+                setTimeout(() => {
+                    refreshAccountingData();
+                }, 100);
+                break;
+            case 'categories':
+                loadCategories();
+                break;
+            case 'products':
+                loadProducts();
+                break;
+            case 'clients':
+                loadClients();
+                break;
+            case 'incoming':
+                loadIncomingData();
+                break;
+            case 'warehouse':
+                renderDashboardInventoryOverview();
+                break;
+            case 'invoices':
+                loadInvoices();
+                break;
+            case 'debts':
+                loadDebts();
+                break;
+            case 'money':
+                loadMoneyData();
+                break;
+            case 'movements':
+                loadMovements();
+                break;
+            case 'reports':
+                showReportsTab();
+                if (isSellerSimpleMode()) {
+                    switchReportTab('summary');
+                }
+                break;
+            case 'earnings':
+                loadEarnings();
+                break;
+            case 'calculation':
+                setTimeout(() => {
+                    updateTobaccoCostDisplay();
+                }, 100);
+                break;
+            case 'roast-calculation':
+                initRoastCalc();
+                break;
+            case 'settings':
+                loadShiftCashSettings();
+                loadRoastCostSettings();
+                loadTobaccoCostSettings();
+                break;
+        }
+    } catch (error) {
+        console.error(`Ошибка загрузки раздела ${tabName}:`, error);
+        showTabRenderError(targetPane, error);
+    }
+}
+
 // Переключение вкладок
 function switchTab(tabName) {
     if (!isAuthenticatedUser()) {
@@ -7330,64 +7417,7 @@ function switchTab(tabName) {
         }
     }
 
-    // Загружаем данные для вкладки
-    switch(tabName) {
-        case 'accounting':
-            setTimeout(() => {
-                refreshAccountingData();
-            }, 100);
-            break;
-        case 'categories':
-            loadCategories();
-            break;
-        case 'products':
-            loadProducts();
-            break;
-        case 'clients':
-            loadClients();
-            break;
-        case 'incoming':
-            loadIncomingData();
-            break;
-        case 'warehouse':
-            renderDashboardInventoryOverview();
-            break;
-        case 'invoices':
-            loadInvoices();
-            break;
-        case 'debts':
-            loadDebts();
-            break;
-        case 'money':
-            loadMoneyData();
-            break;
-        case 'movements':
-            loadMovements();
-            break;
-        case 'reports':
-            showReportsTab(); // Используем специальную функцию для отчетов
-            if (isSellerSimpleMode()) {
-                switchReportTab('summary');
-            }
-            break;
-        case 'earnings':
-            loadEarnings();
-            break;
-        case 'calculation':
-            // Обновляем себестоимости в таблице при открытии вкладки расчета
-            setTimeout(() => {
-                updateTobaccoCostDisplay();
-            }, 100);
-            break;
-        case 'roast-calculation':
-            initRoastCalc();
-            break;
-        case 'settings':
-            loadShiftCashSettings();
-            loadRoastCostSettings();
-            loadTobaccoCostSettings();
-            break;
-    }
+    renderTabContent(tabName, targetPane);
 
     renderControlCenter();
 }
@@ -12275,26 +12305,78 @@ function deleteCurrentDebt() {
 
 // ==================== ДВИЖЕНИЕ ПО СКЛАДУ ====================
 
+function getMovementsPageData(source = movements, page = movementsPage) {
+    const sorted = [...(Array.isArray(source) ? source : [])]
+        .sort((left, right) => String(right?.date || '').localeCompare(String(left?.date || '')));
+    const pageSize = MOVEMENTS_PAGE_SIZE;
+    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const safePage = Math.min(Math.max(1, Number(page) || 1), totalPages);
+    const startIndex = (safePage - 1) * pageSize;
+
+    return {
+        items: sorted.slice(startIndex, startIndex + pageSize),
+        total: sorted.length,
+        page: safePage,
+        totalPages,
+        startIndex,
+        endIndex: Math.min(sorted.length, startIndex + pageSize)
+    };
+}
+
+function renderMovementItem(movement = {}) {
+    const quantity = Number(movement.quantity) || 0;
+    const quantityText = `${quantity > 0 ? '+' : ''}${formatQuantity(quantity, 'шт')} шт`;
+
+    return `
+        <div class="movement-item ${quantity < 0 ? 'sale' : 'purchase'}">
+            <div class="movement-header">
+                <span class="movement-type">${escapeHtml(movement.type || 'Движение')}</span>
+                <span class="movement-date">${formatDate(movement.date)}</span>
+            </div>
+            <div class="movement-details">
+                ${escapeHtml(movement.description || 'Без описания')} (${quantityText})
+            </div>
+        </div>
+    `;
+}
+
 // Загрузка движений
 function loadMovements() {
     const container = document.getElementById('movements-list');
-    
-    if (movements.length === 0) {
+    if (!container) return;
+
+    if (!Array.isArray(movements) || movements.length === 0) {
         container.innerHTML = '<p class="text-center">Нет движений</p>';
         return;
     }
 
-    container.innerHTML = movements.map(movement => `
-        <div class="movement-item ${movement.quantity < 0 ? 'sale' : 'purchase'}">
-            <div class="movement-header">
-                <span class="movement-type">${movement.type}</span>
-                <span class="movement-date">${formatDate(movement.date)}</span>
-            </div>
-            <div class="movement-details">
-                ${movement.description} (${movement.quantity > 0 ? '+' : ''}${movement.quantity} шт.)
-            </div>
+    const pageData = getMovementsPageData(movements, movementsPage);
+    movementsPage = pageData.page;
+
+    container.innerHTML = `
+        <div class="movements-summary">
+            <span>${pageData.startIndex + 1}-${pageData.endIndex} из ${pageData.total} движений</span>
+            <span>Страница ${pageData.page} из ${pageData.totalPages}</span>
         </div>
-    `).join('');
+        <div class="movements-page-grid">
+            ${pageData.items.map(renderMovementItem).join('')}
+        </div>
+        ${pageData.totalPages > 1 ? `
+            <div class="movements-pagination">
+                <button class="btn btn-secondary btn-sm" onclick="changeMovementsPage(-1)" ${pageData.page <= 1 ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-left"></i> Назад
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="changeMovementsPage(1)" ${pageData.page >= pageData.totalPages ? 'disabled' : ''}>
+                    Вперед <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        ` : ''}
+    `;
+}
+
+function changeMovementsPage(delta) {
+    movementsPage += Number(delta) || 0;
+    loadMovements();
 }
 
 // Добавить движение
@@ -21830,6 +21912,9 @@ function renderControlCenter() {
     } else if (cloudSyncState.syncing) {
         cloudBadge.textContent = 'Синхронизация...';
         cloudBadge.className = 'status-chip status-chip-info';
+    } else if (cloudSyncState.initializing || cloudSyncState.pulling) {
+        cloudBadge.textContent = 'Подключаю облако...';
+        cloudBadge.className = 'status-chip status-chip-info';
     } else if (cloudSyncState.ready) {
         cloudBadge.textContent = 'Облако активно';
         cloudBadge.className = 'status-chip status-chip-success';
@@ -22241,6 +22326,7 @@ function hasValidCloudConfig(config) {
 
 async function initializeCloudSync(forceReinitialize = false) {
     const config = getCloudSyncConfig();
+    cloudSyncState.initializing = hasValidCloudConfig(config);
 
     if (cloudSyncState.unsubscribe && forceReinitialize) {
         cloudSyncState.unsubscribe();
@@ -22255,6 +22341,7 @@ async function initializeCloudSync(forceReinitialize = false) {
 
     if (!hasValidCloudConfig(config)) {
         cloudSyncState.ready = false;
+        cloudSyncState.initializing = false;
         cloudSyncState.lastError = '';
         stopCloudSyncPolling();
         renderControlCenter();
@@ -22268,6 +22355,7 @@ async function initializeCloudSync(forceReinitialize = false) {
 
     if (typeof firebase === 'undefined') {
         cloudSyncState.ready = false;
+        cloudSyncState.initializing = false;
         cloudSyncState.lastError = 'Firebase SDK не загружен';
         renderControlCenter();
         return;
@@ -22307,6 +22395,7 @@ async function initializeCloudSync(forceReinitialize = false) {
         cloudSyncState.lastError = error.message || 'Ошибка подключения к Firestore';
     }
 
+    cloudSyncState.initializing = false;
     renderControlCenter();
 }
 
@@ -22334,6 +22423,8 @@ async function initializeSupabaseSync(config = getCloudSyncConfig()) {
         cloudSyncState.ready = false;
         cloudSyncState.lastError = error.message || 'Ошибка подключения Supabase';
         stopCloudSyncPolling();
+    } finally {
+        cloudSyncState.initializing = false;
     }
 
     renderControlCenter();
@@ -22383,12 +22474,25 @@ function persistCloudPayloadLocally(payload) {
     });
 }
 
+function refreshInterfaceAfterDataChange() {
+    updateStats();
+    loadDashboardData();
+    loadCategoriesToSelects();
+    loadClientsToSelects();
+    loadProductsToSelects();
+    applyAccessControl();
+    window.__suppressTabAccessAlert = true;
+    renderTabContent(document.querySelector('.nav-item.active')?.getAttribute('data-tab') || getDefaultTabForCurrentRole());
+    window.__suppressTabAccessAlert = false;
+    renderControlCenter();
+}
+
 function applyCloudPayload(payload) {
-    if (!payload || cloudSyncState.applyingRemote) return;
+    if (!payload || cloudSyncState.applyingRemote) return false;
 
     const payloadUpdatedAt = payload.updatedAt || '';
     if (payloadUpdatedAt && payloadUpdatedAt === cloudSyncState.lastAppliedRemoteUpdatedAt) {
-        return;
+        return false;
     }
 
     cloudSyncState.applyingRemote = true;
@@ -22428,16 +22532,14 @@ function applyCloudPayload(payload) {
         cloudSyncState.applyingRemote = false;
     }
 
-    updateStats();
-    loadDashboardData();
-    loadCategoriesToSelects();
-    loadClientsToSelects();
-    loadProductsToSelects();
-    applyAccessControl();
-    window.__suppressTabAccessAlert = true;
-    switchTab(document.querySelector('.nav-item.active')?.getAttribute('data-tab') || getDefaultTabForCurrentRole());
-    window.__suppressTabAccessAlert = false;
-    renderControlCenter();
+    try {
+        refreshInterfaceAfterDataChange();
+    } catch (error) {
+        console.error('Ошибка обновления интерфейса после облака:', error);
+        renderControlCenter();
+    }
+
+    return true;
 }
 
 function scheduleCloudSync() {
@@ -22537,8 +22639,10 @@ async function pullCloudStateNow(options = {}) {
 
         const remoteUpdatedAt = data.payload_updated_at || data.payload?.updatedAt || '';
         if (remoteUpdatedAt && remoteUpdatedAt !== cloudSyncState.lastRemoteUpdatedAt) {
-            cloudSyncState.lastRemoteUpdatedAt = remoteUpdatedAt;
-            applyCloudPayload(data.payload || {});
+            const applied = applyCloudPayload(data.payload || {});
+            if (applied || data.payload?.updatedAt === cloudSyncState.lastAppliedRemoteUpdatedAt) {
+                cloudSyncState.lastRemoteUpdatedAt = remoteUpdatedAt;
+            }
         }
         cloudSyncState.lastError = '';
         return data;
