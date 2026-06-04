@@ -14303,7 +14303,7 @@ function generateId() {
 function saveData(key, data) {
     schedulePersistentWrite(key, data);
 
-    if (!LOCAL_ONLY_KEYS.has(key)) {
+    if (!LOCAL_ONLY_KEYS.has(key) && !cloudSyncState.applyingRemote) {
         markCloudPendingChange(key);
         scheduleCloudSync();
     }
