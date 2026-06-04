@@ -18,6 +18,7 @@ let initialStockEntries = JSON.parse(localStorage.getItem('initialStockEntries')
 let supplierReturns = JSON.parse(localStorage.getItem('supplierReturns')) || [];
 let packageProductions = JSON.parse(localStorage.getItem('packageProductions')) || [];
 let openedStockEvents = JSON.parse(localStorage.getItem('openedStockEvents')) || [];
+let cloudPresence = JSON.parse(localStorage.getItem('cloudPresence') || '{}') || {};
 let securitySettings = JSON.parse(localStorage.getItem('securitySettings')) || { managerPinHash: '', sellerPinHash: '' };
 let sessionAccess = JSON.parse(localStorage.getItem('sessionAccess')) || { currentRole: '', isAuthenticated: false, userName: '', sellerSimpleMode: true };
 let shiftHistoryPage = 1;
@@ -95,8 +96,12 @@ const DEFAULT_SUPABASE_PROJECT_URL = 'https://zrbwkgjbparbeddpaymc.supabase.co';
 const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_O9rA0lWG2r2MZqhCnnRzfA_e3vuvEGd';
 const DEFAULT_SUPABASE_SYNC_TABLE = 'warehouse_sync_state';
 const CLOUD_SYNC_CONFIG_BACKUP_KEY = 'warehouseCloudSyncConfigBackup';
+const CLOUD_SYNC_META_KEY = 'warehouseCloudSyncMeta';
+const CLOUD_DEVICE_ID_KEY = 'warehouseCloudDeviceId';
 const CLOUD_SYNC_POLL_INTERVAL_MS = 2500;
 const CLOUD_SYNC_PUSH_DEBOUNCE_MS = 250;
+const CLOUD_PRESENCE_INTERVAL_MS = 30000;
+const CLOUD_PRESENCE_ONLINE_TTL_MS = 90000;
 const MOVEMENTS_PAGE_SIZE = 40;
 const DEFAULT_CLOUD_SYNC_CONFIG = {
     enabled: false,
@@ -126,8 +131,10 @@ let cloudSyncState = {
     syncing: false,
     initializing: false,
     pulling: false,
+    presenceSyncing: false,
     pendingTimer: null,
     pollTimer: null,
+    presenceTimer: null,
     db: null,
     docRef: null,
     client: null,
@@ -135,6 +142,7 @@ let cloudSyncState = {
     applyingRemote: false,
     lastRemoteUpdatedAt: '',
     lastAppliedRemoteUpdatedAt: '',
+    lastDataUpdatedAt: '',
     lastError: ''
 };
 
@@ -14296,8 +14304,135 @@ function saveData(key, data) {
     schedulePersistentWrite(key, data);
 
     if (!LOCAL_ONLY_KEYS.has(key)) {
+        markCloudPendingChange(key);
         scheduleCloudSync();
     }
+}
+
+function getCloudSyncMeta() {
+    const meta = readStorageJson(CLOUD_SYNC_META_KEY, {}) || {};
+    return {
+        hasPendingChanges: Boolean(meta.hasPendingChanges),
+        pendingSince: meta.pendingSince || '',
+        lastLocalChangeAt: meta.lastLocalChangeAt || '',
+        lastLocalDataUpdatedAt: meta.lastLocalDataUpdatedAt || '',
+        lastSuccessfulPushAt: meta.lastSuccessfulPushAt || '',
+        lastSuccessfulPullAt: meta.lastSuccessfulPullAt || '',
+        lastSuccessfulSyncAt: meta.lastSuccessfulSyncAt || '',
+        lastFailureAt: meta.lastFailureAt || '',
+        lastFailureMessage: meta.lastFailureMessage || ''
+    };
+}
+
+function saveCloudSyncMeta(meta = {}) {
+    localStorage.setItem(CLOUD_SYNC_META_KEY, JSON.stringify({
+        ...getCloudSyncMeta(),
+        ...meta
+    }));
+    renderCloudSafetyBanner();
+}
+
+function markCloudPendingChange(reason = '') {
+    const config = getCloudSyncConfig();
+    if (!config.enabled) return;
+
+    const now = new Date().toISOString();
+    const current = getCloudSyncMeta();
+    saveCloudSyncMeta({
+        hasPendingChanges: true,
+        pendingSince: current.pendingSince || now,
+        lastLocalChangeAt: now,
+        lastLocalDataUpdatedAt: now,
+        pendingReason: reason || current.pendingReason || ''
+    });
+}
+
+function clearCloudPendingChanges() {
+    const now = new Date().toISOString();
+    saveCloudSyncMeta({
+        hasPendingChanges: false,
+        pendingSince: '',
+        lastSuccessfulPushAt: now,
+        lastSuccessfulSyncAt: now,
+        lastFailureMessage: ''
+    });
+}
+
+function markCloudSyncFailure(error, fallback = 'Ошибка синхронизации') {
+    saveCloudSyncMeta({
+        lastFailureAt: new Date().toISOString(),
+        lastFailureMessage: normalizeCloudError(error, fallback)
+    });
+}
+
+function markCloudPullSuccess() {
+    const now = new Date().toISOString();
+    saveCloudSyncMeta({
+        lastSuccessfulPullAt: now,
+        lastSuccessfulSyncAt: now,
+        lastFailureMessage: ''
+    });
+}
+
+function hasPendingCloudChanges() {
+    return getCloudSyncMeta().hasPendingChanges;
+}
+
+function formatCloudSyncTime(value) {
+    if (!value) return 'не было';
+    return formatShortDateTime(value);
+}
+
+function getCloudSafetyStatus() {
+    const config = getCloudSyncConfig();
+    const meta = getCloudSyncMeta();
+    if (!config.enabled) {
+        return { level: 'muted', title: 'Облако не настроено', detail: 'Данные сохраняются только на этом устройстве.' };
+    }
+    if (!navigator.onLine) {
+        return { level: 'danger', title: 'Нет интернета', detail: 'Данные сохранены локально и отправятся после восстановления сети/VPN.' };
+    }
+    if (meta.hasPendingChanges) {
+        return { level: 'danger', title: 'Есть неотправленные изменения', detail: `Сохранено локально с ${formatCloudSyncTime(meta.pendingSince)}. Включите VPN, данные отправятся автоматически.` };
+    }
+    if (cloudSyncState.lastError || meta.lastFailureMessage) {
+        return { level: 'warning', title: 'Облако требует внимания', detail: cloudSyncState.lastError || meta.lastFailureMessage };
+    }
+    if (cloudSyncState.ready) {
+        return { level: 'success', title: 'Облако активно', detail: `Последний обмен: ${formatCloudSyncTime(meta.lastSuccessfulSyncAt)}` };
+    }
+    return { level: 'warning', title: 'Облако подключается', detail: 'Если долго висит этот статус, проверьте VPN.' };
+}
+
+function renderCloudSafetyBanner() {
+    if (typeof document === 'undefined' || !document.body) return;
+    const config = getCloudSyncConfig();
+    const meta = getCloudSyncMeta();
+    const shouldShow = config.enabled && (!navigator.onLine || meta.hasPendingChanges || cloudSyncState.lastError || meta.lastFailureMessage);
+    let banner = document.getElementById('cloud-safety-banner');
+
+    if (!shouldShow) {
+        if (banner) banner.remove();
+        return;
+    }
+
+    const status = getCloudSafetyStatus();
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'cloud-safety-banner';
+        document.body.appendChild(banner);
+    }
+
+    banner.className = `cloud-safety-banner cloud-safety-banner-${status.level}`;
+    banner.innerHTML = `
+        <div>
+            <strong>${escapeHtml(status.title)}</strong>
+            <span>${escapeHtml(status.detail)}</span>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="syncCloudNow()">
+            <i class="fas fa-arrows-rotate"></i> Синхронизировать
+        </button>
+    `;
 }
 
 // Форматирование валюты
@@ -19905,6 +20040,7 @@ function setAuthenticatedSession(role, userName) {
     renderAuthState();
     applyAccessControl();
     renderControlCenter();
+    startCloudPresenceHeartbeat();
     window.__suppressTabAccessAlert = true;
     switchTab(getDefaultTabForCurrentRole());
     window.__suppressTabAccessAlert = false;
@@ -19950,6 +20086,8 @@ function loginAsSeller() {
 }
 
 function logoutCurrentUser() {
+    pushCloudPresenceNow('offline');
+    stopCloudPresenceHeartbeat();
     sessionAccess.isAuthenticated = false;
     sessionAccess.userName = '';
     sessionAccess.currentRole = '';
@@ -20452,6 +20590,13 @@ function closeShift() {
     if (!(factTobacco >= 0) || !(factRoast >= 0) || !(factSoup >= 0)) {
         alert('Введите фактические остатки табака, жарки и супа');
         return;
+    }
+    if (getCloudSyncConfig().enabled && (hasPendingCloudChanges() || cloudSyncState.lastError || !cloudSyncState.ready)) {
+        const status = getCloudSafetyStatus();
+        const proceed = confirm(`${status.title}\n${status.detail}\n\nСмена сохранится на этом устройстве, но руководитель увидит ее только после успешной синхронизации. Закрыть смену?`);
+        if (!proceed) {
+            return;
+        }
     }
 
     const summary = calculateShiftSummary(currentShift);
@@ -21890,6 +22035,8 @@ function renderControlCenter() {
     const roleLabel = document.getElementById('current-role-label');
     const pinStatus = document.getElementById('manager-pin-status');
     const cloudBadge = document.getElementById('cloud-sync-badge');
+    const cloudStatusLabel = document.getElementById('cloud-sync-status-label');
+    const cloudStatusDetail = document.getElementById('cloud-sync-status-detail');
     const shiftChip = document.getElementById('shift-status-chip');
     const shiftSummary = document.getElementById('shift-summary');
     const openForm = document.getElementById('shift-open-form');
@@ -21905,6 +22052,7 @@ function renderControlCenter() {
     roleLabel.textContent = getCurrentRole() === 'seller' ? 'Продавец' : 'Руководитель';
     roleLabel.className = isSellerMode() ? 'seller-highlight' : '';
     pinStatus.textContent = `Рук.: ${hasManagerPin() ? 'задан' : 'не задан'} • Продавец: ${securitySettings.sellerPinHash ? 'задан' : 'не задан'}`;
+    const cloudSafetyStatus = getCloudSafetyStatus();
 
     if (!navigator.onLine) {
         cloudBadge.textContent = 'Нет сети';
@@ -21925,6 +22073,14 @@ function renderControlCenter() {
         cloudBadge.textContent = 'Локально';
         cloudBadge.className = 'status-chip status-chip-muted';
     }
+    if (cloudStatusLabel && cloudStatusDetail) {
+        const meta = getCloudSyncMeta();
+        cloudStatusLabel.textContent = cloudSafetyStatus.title;
+        cloudStatusLabel.className = `cloud-status-strong cloud-status-${cloudSafetyStatus.level}`;
+        cloudStatusDetail.textContent = `${cloudSafetyStatus.detail} Последняя отправка: ${formatCloudSyncTime(meta.lastSuccessfulPushAt)}. Последнее чтение: ${formatCloudSyncTime(meta.lastSuccessfulPullAt)}.`;
+    }
+    renderCloudPresenceSummary();
+    renderCloudSafetyBanner();
 
     const currentShift = getCurrentShift();
     const shiftToShow = currentShift || getRecentShifts(1)[0] || null;
@@ -22170,6 +22326,140 @@ function startCloudSyncPolling() {
     cloudSyncState.pollTimer = setInterval(() => {
         pullCloudStateNow({ silent: true, skipIfBusy: true });
     }, CLOUD_SYNC_POLL_INTERVAL_MS);
+}
+
+function getCloudDeviceId() {
+    let deviceId = localStorage.getItem(CLOUD_DEVICE_ID_KEY);
+    if (!deviceId) {
+        deviceId = `device-${generateId()}`;
+        localStorage.setItem(CLOUD_DEVICE_ID_KEY, deviceId);
+    }
+    return deviceId;
+}
+
+function getCloudPresenceRecord(status = 'online') {
+    const now = new Date().toISOString();
+    return {
+        deviceId: getCloudDeviceId(),
+        actor: getActorLabel(),
+        role: getCurrentRole(),
+        status,
+        lastSeenAt: now,
+        lastSyncAt: getCloudSyncMeta().lastSuccessfulSyncAt || '',
+        hasPendingChanges: hasPendingCloudChanges(),
+        userAgent: navigator.userAgent || ''
+    };
+}
+
+function mergeCloudPresence(existing = {}, record = getCloudPresenceRecord()) {
+    const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+    const nextPresence = Object.entries(existing || {}).reduce((acc, [deviceId, item]) => {
+        const seenTime = new Date(item?.lastSeenAt || 0).getTime();
+        if (Number.isFinite(seenTime) && seenTime >= cutoff) {
+            acc[deviceId] = item;
+        }
+        return acc;
+    }, {});
+
+    nextPresence[record.deviceId] = record;
+    return nextPresence;
+}
+
+function saveCloudPresenceLocally(presence = cloudPresence) {
+    cloudPresence = presence && typeof presence === 'object' ? presence : {};
+    localStorage.setItem('cloudPresence', JSON.stringify(cloudPresence));
+}
+
+function getCloudPresenceList() {
+    return Object.values(cloudPresence || {})
+        .filter(item => item && item.deviceId)
+        .sort((left, right) => String(right.lastSeenAt || '').localeCompare(String(left.lastSeenAt || '')));
+}
+
+function isPresenceOnline(record) {
+    const lastSeen = new Date(record?.lastSeenAt || 0).getTime();
+    return record?.status === 'online'
+        && Number.isFinite(lastSeen)
+        && (Date.now() - lastSeen) <= CLOUD_PRESENCE_ONLINE_TTL_MS;
+}
+
+function renderCloudPresenceSummary() {
+    const countEl = document.getElementById('cloud-online-count');
+    const listEl = document.getElementById('cloud-online-list');
+    if (!countEl || !listEl) return;
+
+    const list = getCloudPresenceList();
+    const onlineList = list.filter(isPresenceOnline);
+    countEl.textContent = onlineList.length ? `${onlineList.length} онлайн` : 'Нет онлайн';
+    countEl.className = onlineList.length ? 'cloud-online-strong' : 'cloud-offline-strong';
+    listEl.innerHTML = list.length
+        ? list.slice(0, 5).map(item => {
+            const online = isPresenceOnline(item);
+            const role = item.role === 'seller' ? 'продавец' : 'руководитель';
+            const pending = item.hasPendingChanges ? ' • ждет отправки' : '';
+            return `<span class="cloud-presence-row ${online ? 'online' : 'offline'}">${escapeHtml(item.actor || 'Пользователь')} (${role}) - ${online ? 'онлайн' : formatCloudSyncTime(item.lastSeenAt)}${pending}</span>`;
+        }).join('')
+        : '<span class="cloud-presence-row offline">Пока нет данных по устройствам</span>';
+}
+
+async function pushCloudPresenceNow(status = 'online') {
+    const config = getCloudSyncConfig();
+    if (!hasValidCloudConfig(config) || (config.provider || 'supabase') !== 'supabase' || cloudSyncState.presenceSyncing) {
+        return;
+    }
+
+    const supabaseConfig = normalizeSupabaseSyncConfig(config.supabase);
+    if (!cloudSyncState.client) {
+        await initializeSupabaseSync(config);
+    }
+    if (!cloudSyncState.client) return;
+
+    try {
+        cloudSyncState.presenceSyncing = true;
+        const remote = await cloudSyncState.client.selectState(supabaseConfig.workspaceId);
+        const remotePayload = remote?.payload || {};
+        const presence = mergeCloudPresence(remotePayload.cloudPresence || cloudPresence, getCloudPresenceRecord(status));
+        const now = new Date().toISOString();
+        const payload = {
+            ...remotePayload,
+            cloudPresence: presence,
+            dataUpdatedAt: remotePayload.dataUpdatedAt || remotePayload.updatedAt || now,
+            updatedAt: now
+        };
+        const syncKeyHash = await ensureSupabaseSyncKeyHash(supabaseConfig);
+        await cloudSyncState.client.upsertState({
+            workspace_id: supabaseConfig.workspaceId,
+            sync_key_hash: syncKeyHash,
+            payload,
+            payload_updated_at: payload.updatedAt,
+            client_id: getActorLabel(),
+            updated_at: now
+        });
+        saveCloudPresenceLocally(presence);
+        renderCloudPresenceSummary();
+    } catch (error) {
+        cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка статуса онлайн');
+        markCloudSyncFailure(error, 'Ошибка статуса онлайн');
+    } finally {
+        cloudSyncState.presenceSyncing = false;
+        renderControlCenter();
+    }
+}
+
+function stopCloudPresenceHeartbeat() {
+    if (cloudSyncState.presenceTimer) {
+        clearInterval(cloudSyncState.presenceTimer);
+        cloudSyncState.presenceTimer = null;
+    }
+}
+
+function startCloudPresenceHeartbeat() {
+    stopCloudPresenceHeartbeat();
+    if (!hasValidCloudConfig(getCloudSyncConfig())) return;
+    pushCloudPresenceNow();
+    cloudSyncState.presenceTimer = setInterval(() => {
+        pushCloudPresenceNow();
+    }, CLOUD_PRESENCE_INTERVAL_MS);
 }
 
 function normalizeCloudError(error, fallback = 'Ошибка облака') {
@@ -22448,10 +22738,12 @@ async function initializeSupabaseSync(config = getCloudSyncConfig()) {
         });
         await pullCloudStateNow({ allowInitialPush: true, silent: true });
         startCloudSyncPolling();
+        startCloudPresenceHeartbeat();
     } catch (error) {
         cloudSyncState.ready = false;
         cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка подключения Supabase');
         stopCloudSyncPolling();
+        stopCloudPresenceHeartbeat();
     } finally {
         cloudSyncState.initializing = false;
     }
@@ -22461,6 +22753,10 @@ async function initializeSupabaseSync(config = getCloudSyncConfig()) {
 
 function collectCloudPayload() {
     const state = getCurrentAppState();
+    const now = new Date().toISOString();
+    const meta = getCloudSyncMeta();
+    const dataUpdatedAt = meta.lastLocalDataUpdatedAt || cloudSyncState.lastDataUpdatedAt || now;
+    const presence = mergeCloudPresence(cloudPresence, getCloudPresenceRecord());
     LOCAL_ONLY_KEYS.forEach(key => delete state[key]);
     delete state.securitySettings;
     delete state.sessionAccess;
@@ -22468,7 +22764,9 @@ function collectCloudPayload() {
 
     return {
         ...state,
-        updatedAt: new Date().toISOString()
+        cloudPresence: presence,
+        dataUpdatedAt,
+        updatedAt: now
     };
 }
 
@@ -22520,7 +22818,17 @@ function applyCloudPayload(payload) {
     if (!payload || cloudSyncState.applyingRemote) return false;
 
     const payloadUpdatedAt = payload.updatedAt || '';
+    const payloadDataUpdatedAt = payload.dataUpdatedAt || payload.updatedAt || '';
     if (payloadUpdatedAt && payloadUpdatedAt === cloudSyncState.lastAppliedRemoteUpdatedAt) {
+        return false;
+    }
+    if (payload.cloudPresence) {
+        saveCloudPresenceLocally(payload.cloudPresence);
+        renderCloudPresenceSummary();
+    }
+    if (payloadDataUpdatedAt && payloadDataUpdatedAt === cloudSyncState.lastDataUpdatedAt) {
+        cloudSyncState.lastAppliedRemoteUpdatedAt = payloadUpdatedAt || cloudSyncState.lastAppliedRemoteUpdatedAt;
+        renderControlCenter();
         return false;
     }
 
@@ -22557,6 +22865,7 @@ function applyCloudPayload(payload) {
         autoArchiveOldInvoices();
         syncIncomingProductsStock();
         cloudSyncState.lastAppliedRemoteUpdatedAt = payloadUpdatedAt || cloudSyncState.lastAppliedRemoteUpdatedAt;
+        cloudSyncState.lastDataUpdatedAt = payloadDataUpdatedAt || cloudSyncState.lastDataUpdatedAt;
     } finally {
         cloudSyncState.applyingRemote = false;
     }
@@ -22597,8 +22906,10 @@ async function pushCloudStateNow() {
             renderControlCenter();
             await cloudSyncState.docRef.set(collectCloudPayload(), { merge: true });
             cloudSyncState.lastError = '';
+            clearCloudPendingChanges();
         } catch (error) {
             cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка записи в облако');
+            markCloudSyncFailure(error, 'Ошибка записи в облако');
         } finally {
             cloudSyncState.syncing = false;
             renderControlCenter();
@@ -22627,9 +22938,13 @@ async function pushCloudStateNow() {
             updated_at: new Date().toISOString()
         });
         cloudSyncState.lastRemoteUpdatedAt = data?.payload_updated_at || payloadUpdatedAt;
+        cloudSyncState.lastDataUpdatedAt = payload.dataUpdatedAt || payloadUpdatedAt;
         cloudSyncState.lastError = '';
+        saveCloudPresenceLocally(payload.cloudPresence || cloudPresence);
+        clearCloudPendingChanges();
     } catch (error) {
         cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка записи в Supabase');
+        markCloudSyncFailure(error, 'Ошибка записи в Supabase');
     } finally {
         cloudSyncState.syncing = false;
         renderControlCenter();
@@ -22674,9 +22989,14 @@ async function pullCloudStateNow(options = {}) {
             }
         }
         cloudSyncState.lastError = '';
+        markCloudPullSuccess();
+        if (hasPendingCloudChanges()) {
+            scheduleCloudSync();
+        }
         return data;
     } catch (error) {
         cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка чтения Supabase');
+        markCloudSyncFailure(error, 'Ошибка чтения Supabase');
         if (!options.silent) {
             renderControlCenter();
         }
@@ -22717,6 +23037,10 @@ function initializeCloudSyncAutoRefresh() {
     const pullIfReady = () => {
         if (!hasValidCloudConfig(getCloudSyncConfig())) return;
         pullCloudStateNow({ silent: true, skipIfBusy: true });
+        if (hasPendingCloudChanges()) {
+            scheduleCloudSync();
+        }
+        pushCloudPresenceNow();
     };
 
     window.addEventListener('focus', pullIfReady);

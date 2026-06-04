@@ -773,6 +773,85 @@ body {
     font-size: 1.2rem;
 }
 
+.admin-status-tile small span {
+    display: block;
+    margin-top: 4px;
+}
+
+.cloud-status-strong.cloud-status-success,
+.cloud-online-strong {
+    color: #047857;
+}
+
+.cloud-status-strong.cloud-status-warning {
+    color: #b45309;
+}
+
+.cloud-status-strong.cloud-status-danger,
+.cloud-offline-strong {
+    color: #b91c1c;
+}
+
+.cloud-status-strong.cloud-status-muted {
+    color: #64748b;
+}
+
+.cloud-presence-row.online {
+    color: #047857;
+}
+
+.cloud-presence-row.offline {
+    color: #64748b;
+}
+
+.cloud-safety-banner {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 6000;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
+}
+
+.cloud-safety-banner strong,
+.cloud-safety-banner span {
+    display: block;
+}
+
+.cloud-safety-banner strong {
+    margin-bottom: 3px;
+    font-size: 14px;
+}
+
+.cloud-safety-banner span {
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.cloud-safety-banner-danger {
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    color: #7f1d1d;
+}
+
+.cloud-safety-banner-warning {
+    border: 1px solid #fed7aa;
+    background: #fff7ed;
+    color: #7c2d12;
+}
+
+.cloud-safety-banner-success {
+    border: 1px solid #bbf7d0;
+    background: #f0fdf4;
+    color: #14532d;
+}
+
 .admin-action-tile {
     display: grid;
     align-content: center;
@@ -13694,6 +13773,18 @@ body.seller-mode.seller-simple-mode #manageDebtModal .modal-footer .btn {
     .audit-detail-body {
         max-height: none !important;
         overflow-y: auto !important;
+    }
+
+    .cloud-safety-banner {
+        left: 8px;
+        right: 8px;
+        bottom: calc(8px + env(safe-area-inset-bottom));
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .cloud-safety-banner .btn {
+        width: 100%;
     }
 
     .movements-summary,
