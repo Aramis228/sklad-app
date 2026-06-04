@@ -98,10 +98,11 @@ const DEFAULT_SUPABASE_SYNC_TABLE = 'warehouse_sync_state';
 const CLOUD_SYNC_CONFIG_BACKUP_KEY = 'warehouseCloudSyncConfigBackup';
 const CLOUD_SYNC_META_KEY = 'warehouseCloudSyncMeta';
 const CLOUD_DEVICE_ID_KEY = 'warehouseCloudDeviceId';
-const CLOUD_SYNC_POLL_INTERVAL_MS = 1200;
+const CLOUD_SYNC_POLL_INTERVAL_MS = 2000;
 const CLOUD_SYNC_PUSH_DEBOUNCE_MS = 250;
-const CLOUD_SYNC_REQUEST_TIMEOUT_MS = 3500;
-const CLOUD_SYNC_RECOVERY_RETRY_MS = 700;
+const CLOUD_SYNC_REQUEST_TIMEOUT_MS = 12000;
+const CLOUD_SYNC_SDK_TIMEOUT_MS = 8000;
+const CLOUD_SYNC_RECOVERY_RETRY_MS = 1200;
 const CLOUD_PRESENCE_INTERVAL_MS = 30000;
 const CLOUD_PRESENCE_ONLINE_TTL_MS = 90000;
 const MOVEMENTS_PAGE_SIZE = 40;
@@ -22543,6 +22544,24 @@ async function fetchCloudRpc(url, options = {}, timeoutMs = CLOUD_SYNC_REQUEST_T
     }
 }
 
+function withCloudTimeout(promise, timeoutMs = CLOUD_SYNC_SDK_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            reject(new Error('Supabase request timeout'));
+        }, timeoutMs);
+
+        Promise.resolve(promise)
+            .then(value => {
+                clearTimeout(timeoutId);
+                resolve(value);
+            })
+            .catch(error => {
+                clearTimeout(timeoutId);
+                reject(error);
+            });
+    });
+}
+
 async function parseSupabaseRpcResponse(response) {
     if (!response.ok) {
         throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
@@ -22597,6 +22616,52 @@ function createSupabaseDataClient(config) {
             return parseSupabaseRpcResponse(response);
         }
     };
+
+    if (window.supabase?.createClient) {
+        const client = window.supabase.createClient(
+            config.url,
+            config.publishableKey,
+            {
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                    detectSessionInUrl: false
+                },
+                global: {
+                    fetch: typeof window.fetch === 'function' ? window.fetch.bind(window) : undefined
+                }
+            }
+        );
+
+        return {
+            async selectState(workspaceId) {
+                try {
+                    const { data, error } = await withCloudTimeout(client.rpc('warehouse_sync_pull', {
+                        p_workspace_id: workspaceId,
+                        p_sync_key: config.syncKey
+                    }));
+                    if (error) throw error;
+                    return Array.isArray(data) ? (data[0] || null) : data;
+                } catch (error) {
+                    return fetchClient.selectState(workspaceId);
+                }
+            },
+            async upsertState(row) {
+                try {
+                    const { data, error } = await withCloudTimeout(client.rpc('warehouse_sync_push', {
+                        p_workspace_id: row.workspace_id,
+                        p_sync_key: config.syncKey,
+                        p_payload: row.payload || {},
+                        p_client_id: row.client_id || null
+                    }));
+                    if (error) throw error;
+                    return Array.isArray(data) ? (data[0] || null) : data;
+                } catch (error) {
+                    return fetchClient.upsertState(row);
+                }
+            }
+        };
+    }
 
     return fetchClient;
 }
