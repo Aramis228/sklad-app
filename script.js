@@ -14425,12 +14425,18 @@ function renderCloudSafetyBanner() {
 
     banner.className = `cloud-safety-banner cloud-safety-banner-${status.level}`;
     banner.innerHTML = `
-        <div>
-            <strong>${escapeHtml(status.title)}</strong>
-            <span>${escapeHtml(status.detail)}</span>
+        <div class="cloud-safety-content">
+            <div class="cloud-safety-icon">
+                <i class="fas fa-cloud-arrow-up"></i>
+            </div>
+            <div class="cloud-safety-copy">
+                <strong>${escapeHtml(status.title)}</strong>
+                <span title="${escapeHtml(status.detail)}">${escapeHtml(status.detail)}</span>
+            </div>
         </div>
-        <button class="btn btn-sm btn-secondary" onclick="syncCloudNow()">
-            <i class="fas fa-arrows-rotate"></i> Синхронизировать
+        <button class="btn btn-sm btn-secondary cloud-safety-action" onclick="syncCloudNow()" title="Синхронизировать">
+            <i class="fas fa-arrows-rotate"></i>
+            <span>Синхронизировать</span>
         </button>
     `;
 }

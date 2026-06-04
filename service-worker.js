@@ -1,8 +1,8 @@
-const CACHE_NAME = 'warehouse-app-v8';
+const CACHE_NAME = 'warehouse-app-v9';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.7',
+  './styles.css?v=1.8',
   './calculation_styles.css',
   './script.js?v=1.8',
   './manifest.webmanifest',
