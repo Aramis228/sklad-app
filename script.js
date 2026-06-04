@@ -14509,6 +14509,8 @@ function unlockBodyScroll() {
     if (openModals.length === 0) {
         document.body.style.overflow = '';
         document.body.style.paddingRight = '';
+        document.body.classList.remove('modal-open');
+        renderCloudSafetyBanner();
     }
 }
 
@@ -14550,6 +14552,7 @@ function openModal(modalId) {
         // Блокируем скролл body при открытии модального окна
         const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
         document.body.style.overflow = 'hidden';
+        document.body.classList.add('modal-open');
         if (scrollbarWidth > 0) {
             document.body.style.paddingRight = scrollbarWidth + 'px';
         }
@@ -14557,6 +14560,7 @@ function openModal(modalId) {
         // Используем flex-раскладку из CSS (.modal.open { display:flex; align-items:center; })
         modal.style.display = '';
         modal.classList.add('open');
+        renderCloudSafetyBanner();
     }
 }
 
