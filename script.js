@@ -22079,6 +22079,9 @@ function renderControlCenter() {
     } else if (cloudSyncState.syncing) {
         cloudBadge.textContent = 'Синхронизация...';
         cloudBadge.className = 'status-chip status-chip-info';
+    } else if (cloudSyncState.ready && cloudSyncState.pulling) {
+        cloudBadge.textContent = 'Обновляю данные...';
+        cloudBadge.className = 'status-chip status-chip-info';
     } else if (cloudSyncState.initializing || cloudSyncState.pulling) {
         cloudBadge.textContent = 'Подключаю облако...';
         cloudBadge.className = 'status-chip status-chip-info';
