@@ -98,8 +98,10 @@ const DEFAULT_SUPABASE_SYNC_TABLE = 'warehouse_sync_state';
 const CLOUD_SYNC_CONFIG_BACKUP_KEY = 'warehouseCloudSyncConfigBackup';
 const CLOUD_SYNC_META_KEY = 'warehouseCloudSyncMeta';
 const CLOUD_DEVICE_ID_KEY = 'warehouseCloudDeviceId';
-const CLOUD_SYNC_POLL_INTERVAL_MS = 2500;
+const CLOUD_SYNC_POLL_INTERVAL_MS = 1200;
 const CLOUD_SYNC_PUSH_DEBOUNCE_MS = 250;
+const CLOUD_SYNC_REQUEST_TIMEOUT_MS = 3500;
+const CLOUD_SYNC_RECOVERY_RETRY_MS = 700;
 const CLOUD_PRESENCE_INTERVAL_MS = 30000;
 const CLOUD_PRESENCE_ONLINE_TTL_MS = 90000;
 const MOVEMENTS_PAGE_SIZE = 40;
@@ -134,7 +136,9 @@ let cloudSyncState = {
     presenceSyncing: false,
     pendingTimer: null,
     pollTimer: null,
+    recoveryTimer: null,
     presenceTimer: null,
+    manualSyncPromise: null,
     db: null,
     docRef: null,
     client: null,
@@ -14366,6 +14370,10 @@ function markCloudSyncFailure(error, fallback = 'Ошибка синхрониз
 }
 
 function markCloudPullSuccess() {
+    if (cloudSyncState.recoveryTimer) {
+        clearTimeout(cloudSyncState.recoveryTimer);
+        cloudSyncState.recoveryTimer = null;
+    }
     const now = new Date().toISOString();
     saveCloudSyncMeta({
         lastSuccessfulPullAt: now,
@@ -22325,13 +22333,40 @@ function stopCloudSyncPolling() {
         clearInterval(cloudSyncState.pollTimer);
         cloudSyncState.pollTimer = null;
     }
+    if (cloudSyncState.recoveryTimer) {
+        clearTimeout(cloudSyncState.recoveryTimer);
+        cloudSyncState.recoveryTimer = null;
+    }
 }
 
 function startCloudSyncPolling() {
     stopCloudSyncPolling();
     cloudSyncState.pollTimer = setInterval(() => {
-        pullCloudStateNow({ silent: true, skipIfBusy: true });
+        runCloudAutoSyncPass();
     }, CLOUD_SYNC_POLL_INTERVAL_MS);
+}
+
+function scheduleCloudRecoverySync(delayMs = CLOUD_SYNC_RECOVERY_RETRY_MS) {
+    if (!hasValidCloudConfig(getCloudSyncConfig())) return;
+    if (cloudSyncState.recoveryTimer) {
+        clearTimeout(cloudSyncState.recoveryTimer);
+    }
+
+    cloudSyncState.recoveryTimer = setTimeout(() => {
+        cloudSyncState.recoveryTimer = null;
+        runCloudAutoSyncPass();
+    }, delayMs);
+}
+
+async function runCloudAutoSyncPass() {
+    if (!hasValidCloudConfig(getCloudSyncConfig())) return null;
+    if (cloudSyncState.syncing || cloudSyncState.pulling || cloudSyncState.initializing) return null;
+
+    const data = await pullCloudStateNow({ silent: true, skipIfBusy: true });
+    if (hasPendingCloudChanges()) {
+        scheduleCloudSync();
+    }
+    return data;
 }
 
 function getCloudDeviceId() {
@@ -22410,7 +22445,12 @@ function renderCloudPresenceSummary() {
 
 async function pushCloudPresenceNow(status = 'online') {
     const config = getCloudSyncConfig();
-    if (!hasValidCloudConfig(config) || (config.provider || 'supabase') !== 'supabase' || cloudSyncState.presenceSyncing) {
+    if (!hasValidCloudConfig(config)
+        || (config.provider || 'supabase') !== 'supabase'
+        || cloudSyncState.presenceSyncing
+        || cloudSyncState.syncing
+        || cloudSyncState.pulling
+        || cloudSyncState.initializing) {
         return;
     }
 
@@ -22470,10 +22510,33 @@ function startCloudPresenceHeartbeat() {
 
 function normalizeCloudError(error, fallback = 'Ошибка облака') {
     const message = String(error?.message || error || '').trim();
+    if (/abort|timeout|timed out/i.test(message)) {
+        return 'Supabase не ответил быстро. Если VPN включен, приложение повторит синхронизацию автоматически.';
+    }
     if (/load failed|failed to fetch|networkerror|network request failed/i.test(message)) {
-        return 'Не удалось соединиться с Supabase. Проверь интернет на телефоне и обнови страницу. Технически: Load failed';
+        return 'Не удалось соединиться с Supabase. Проверь интернет/VPN, данные сохраняются локально и отправятся автоматически.';
     }
     return message || fallback;
+}
+
+async function fetchCloudRpc(url, options = {}, timeoutMs = CLOUD_SYNC_REQUEST_TIMEOUT_MS) {
+    if (typeof window.fetch !== 'function') {
+        throw new Error('fetch недоступен на этом устройстве');
+    }
+
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+        ? setTimeout(() => controller.abort(), timeoutMs)
+        : null;
+
+    try {
+        return await window.fetch(url, {
+            ...options,
+            signal: controller?.signal
+        });
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
 }
 
 async function parseSupabaseRpcResponse(response) {
@@ -22494,11 +22557,7 @@ function createSupabaseDataClient(config) {
 
     const fetchClient = {
         async selectState(workspaceId) {
-            if (typeof window.fetch !== 'function') {
-                throw new Error('fetch недоступен на этом устройстве');
-            }
-
-            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_pull`, {
+            const response = await fetchCloudRpc(`${rpcEndpoint}/warehouse_sync_pull`, {
                 method: 'POST',
                 mode: 'cors',
                 credentials: 'omit',
@@ -22515,11 +22574,7 @@ function createSupabaseDataClient(config) {
             return parseSupabaseRpcResponse(response);
         },
         async upsertState(row) {
-            if (typeof window.fetch !== 'function') {
-                throw new Error('fetch недоступен на этом устройстве');
-            }
-
-            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_push`, {
+            const response = await fetchCloudRpc(`${rpcEndpoint}/warehouse_sync_push`, {
                 method: 'POST',
                 mode: 'cors',
                 credentials: 'omit',
@@ -22538,49 +22593,6 @@ function createSupabaseDataClient(config) {
             return parseSupabaseRpcResponse(response);
         }
     };
-
-    if (window.supabase?.createClient) {
-        const client = window.supabase.createClient(
-            config.url,
-            config.publishableKey,
-            {
-                auth: {
-                    persistSession: false,
-                    autoRefreshToken: false,
-                    detectSessionInUrl: false
-                }
-            }
-        );
-
-        return {
-            async selectState(workspaceId) {
-                try {
-                    const { data, error } = await client.rpc('warehouse_sync_pull', {
-                        p_workspace_id: workspaceId,
-                        p_sync_key: config.syncKey
-                    });
-                    if (error) throw error;
-                    return Array.isArray(data) ? (data[0] || null) : data;
-                } catch (error) {
-                    return fetchClient.selectState(workspaceId);
-                }
-            },
-            async upsertState(row) {
-                try {
-                    const { data, error } = await client.rpc('warehouse_sync_push', {
-                        p_workspace_id: row.workspace_id,
-                        p_sync_key: config.syncKey,
-                        p_payload: row.payload || {},
-                        p_client_id: row.client_id || null
-                    });
-                    if (error) throw error;
-                    return Array.isArray(data) ? (data[0] || null) : data;
-                } catch (error) {
-                    return fetchClient.upsertState(row);
-                }
-            }
-        };
-    }
 
     return fetchClient;
 }
@@ -22951,6 +22963,7 @@ async function pushCloudStateNow() {
     } catch (error) {
         cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка записи в Supabase');
         markCloudSyncFailure(error, 'Ошибка записи в Supabase');
+        scheduleCloudRecoverySync();
     } finally {
         cloudSyncState.syncing = false;
         renderControlCenter();
@@ -23003,6 +23016,7 @@ async function pullCloudStateNow(options = {}) {
     } catch (error) {
         cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка чтения Supabase');
         markCloudSyncFailure(error, 'Ошибка чтения Supabase');
+        scheduleCloudRecoverySync();
         if (!options.silent) {
             renderControlCenter();
         }
@@ -23017,16 +23031,33 @@ async function pullCloudStateNow(options = {}) {
 }
 
 async function syncCloudNow() {
+    if (cloudSyncState.manualSyncPromise) {
+        return cloudSyncState.manualSyncPromise;
+    }
+
+    cloudSyncState.manualSyncPromise = performCloudManualSync();
+    try {
+        return await cloudSyncState.manualSyncPromise;
+    } finally {
+        cloudSyncState.manualSyncPromise = null;
+    }
+}
+
+async function performCloudManualSync() {
     if (!hasValidCloudConfig(getCloudSyncConfig())) {
         alert('Сначала настройте облачную синхронизацию');
         return;
     }
 
-    await initializeCloudSync(true);
+    if (!cloudSyncState.client || !cloudSyncState.ready) {
+        await initializeCloudSync(true);
+    }
 
     if ((getCloudSyncConfig().provider || 'supabase') === 'supabase') {
-        await pullCloudStateNow();
-        await pushCloudStateNow();
+        await pullCloudStateNow({ allowInitialPush: true });
+        if (hasPendingCloudChanges()) {
+            await pushCloudStateNow();
+        }
         alert(cloudSyncState.lastError ? `Ошибка синхронизации: ${cloudSyncState.lastError}` : 'Синхронизация Supabase выполнена');
         return;
     }
@@ -23042,15 +23073,13 @@ function initializeCloudSyncAutoRefresh() {
 
     const pullIfReady = () => {
         if (!hasValidCloudConfig(getCloudSyncConfig())) return;
-        pullCloudStateNow({ silent: true, skipIfBusy: true });
-        if (hasPendingCloudChanges()) {
-            scheduleCloudSync();
-        }
+        runCloudAutoSyncPass();
         pushCloudPresenceNow();
     };
 
     window.addEventListener('focus', pullIfReady);
     window.addEventListener('online', pullIfReady);
+    window.addEventListener('pageshow', pullIfReady);
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             pullIfReady();
