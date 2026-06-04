@@ -22172,10 +22172,75 @@ function startCloudSyncPolling() {
     }, CLOUD_SYNC_POLL_INTERVAL_MS);
 }
 
+function normalizeCloudError(error, fallback = 'Ошибка облака') {
+    const message = String(error?.message || error || '').trim();
+    if (/load failed|failed to fetch|networkerror|network request failed/i.test(message)) {
+        return 'Не удалось соединиться с Supabase. Проверь интернет на телефоне и обнови страницу. Технически: Load failed';
+    }
+    return message || fallback;
+}
+
+async function parseSupabaseRpcResponse(response) {
+    if (!response.ok) {
+        throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
+    }
+
+    const rows = await response.json();
+    return Array.isArray(rows) ? (rows[0] || null) : rows;
+}
+
 function createSupabaseDataClient(config) {
     const headers = {
         apikey: config.publishableKey,
         Authorization: `Bearer ${config.publishableKey}`
+    };
+    const rpcEndpoint = `${config.url}/rest/v1/rpc`;
+
+    const fetchClient = {
+        async selectState(workspaceId) {
+            if (typeof window.fetch !== 'function') {
+                throw new Error('fetch недоступен на этом устройстве');
+            }
+
+            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_pull`, {
+                method: 'POST',
+                mode: 'cors',
+                credentials: 'omit',
+                cache: 'no-store',
+                headers: {
+                    ...headers,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    p_workspace_id: workspaceId,
+                    p_sync_key: config.syncKey
+                })
+            });
+            return parseSupabaseRpcResponse(response);
+        },
+        async upsertState(row) {
+            if (typeof window.fetch !== 'function') {
+                throw new Error('fetch недоступен на этом устройстве');
+            }
+
+            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_push`, {
+                method: 'POST',
+                mode: 'cors',
+                credentials: 'omit',
+                cache: 'no-store',
+                headers: {
+                    ...headers,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    p_workspace_id: row.workspace_id,
+                    p_sync_key: config.syncKey,
+                    p_payload: row.payload || {},
+                    p_client_id: row.client_id || null
+                })
+            });
+            return parseSupabaseRpcResponse(response);
+        }
     };
 
     if (window.supabase?.createClient) {
@@ -22193,71 +22258,35 @@ function createSupabaseDataClient(config) {
 
         return {
             async selectState(workspaceId) {
-                const { data, error } = await client.rpc('warehouse_sync_pull', {
-                    p_workspace_id: workspaceId,
-                    p_sync_key: config.syncKey
-                });
-                if (error) throw error;
-                return Array.isArray(data) ? (data[0] || null) : data;
+                try {
+                    const { data, error } = await client.rpc('warehouse_sync_pull', {
+                        p_workspace_id: workspaceId,
+                        p_sync_key: config.syncKey
+                    });
+                    if (error) throw error;
+                    return Array.isArray(data) ? (data[0] || null) : data;
+                } catch (error) {
+                    return fetchClient.selectState(workspaceId);
+                }
             },
             async upsertState(row) {
-                const { data, error } = await client.rpc('warehouse_sync_push', {
-                    p_workspace_id: row.workspace_id,
-                    p_sync_key: config.syncKey,
-                    p_payload: row.payload || {},
-                    p_client_id: row.client_id || null
-                });
-                if (error) throw error;
-                return Array.isArray(data) ? (data[0] || null) : data;
+                try {
+                    const { data, error } = await client.rpc('warehouse_sync_push', {
+                        p_workspace_id: row.workspace_id,
+                        p_sync_key: config.syncKey,
+                        p_payload: row.payload || {},
+                        p_client_id: row.client_id || null
+                    });
+                    if (error) throw error;
+                    return Array.isArray(data) ? (data[0] || null) : data;
+                } catch (error) {
+                    return fetchClient.upsertState(row);
+                }
             }
         };
     }
 
-    if (typeof window.fetch !== 'function') {
-        throw new Error('Supabase SDK не загружен и fetch недоступен');
-    }
-
-    const rpcEndpoint = `${config.url}/rest/v1/rpc`;
-    return {
-        async selectState(workspaceId) {
-            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_pull`, {
-                method: 'POST',
-                headers: {
-                    ...headers,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    p_workspace_id: workspaceId,
-                    p_sync_key: config.syncKey
-                })
-            });
-            if (!response.ok) {
-                throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
-            }
-            const rows = await response.json();
-            return Array.isArray(rows) ? (rows[0] || null) : null;
-        },
-        async upsertState(row) {
-            const response = await window.fetch(`${rpcEndpoint}/warehouse_sync_push`, {
-                method: 'POST',
-                headers: {
-                    ...headers,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    p_workspace_id: row.workspace_id,
-                    p_sync_key: config.syncKey,
-                    p_payload: row.payload || {},
-                    p_client_id: row.client_id || null
-                })
-            });
-            if (!response.ok) {
-                throw new Error(await response.text() || `Supabase HTTP ${response.status}`);
-            }
-            const rows = await response.json();
-            return Array.isArray(rows) ? (rows[0] || null) : null;
-        }
-    };
+    return fetchClient;
 }
 
 async function configureCloudSync() {
@@ -22392,7 +22421,7 @@ async function initializeCloudSync(forceReinitialize = false) {
         cloudSyncState.lastError = '';
     } catch (error) {
         cloudSyncState.ready = false;
-        cloudSyncState.lastError = error.message || 'Ошибка подключения к Firestore';
+        cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка подключения к Firestore');
     }
 
     cloudSyncState.initializing = false;
@@ -22421,7 +22450,7 @@ async function initializeSupabaseSync(config = getCloudSyncConfig()) {
         startCloudSyncPolling();
     } catch (error) {
         cloudSyncState.ready = false;
-        cloudSyncState.lastError = error.message || 'Ошибка подключения Supabase';
+        cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка подключения Supabase');
         stopCloudSyncPolling();
     } finally {
         cloudSyncState.initializing = false;
@@ -22569,7 +22598,7 @@ async function pushCloudStateNow() {
             await cloudSyncState.docRef.set(collectCloudPayload(), { merge: true });
             cloudSyncState.lastError = '';
         } catch (error) {
-            cloudSyncState.lastError = error.message || 'Ошибка записи в облако';
+            cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка записи в облако');
         } finally {
             cloudSyncState.syncing = false;
             renderControlCenter();
@@ -22600,7 +22629,7 @@ async function pushCloudStateNow() {
         cloudSyncState.lastRemoteUpdatedAt = data?.payload_updated_at || payloadUpdatedAt;
         cloudSyncState.lastError = '';
     } catch (error) {
-        cloudSyncState.lastError = error.message || 'Ошибка записи в Supabase';
+        cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка записи в Supabase');
     } finally {
         cloudSyncState.syncing = false;
         renderControlCenter();
@@ -22647,7 +22676,7 @@ async function pullCloudStateNow(options = {}) {
         cloudSyncState.lastError = '';
         return data;
     } catch (error) {
-        cloudSyncState.lastError = error.message || 'Ошибка чтения Supabase';
+        cloudSyncState.lastError = normalizeCloudError(error, 'Ошибка чтения Supabase');
         if (!options.silent) {
             renderControlCenter();
         }
@@ -22667,9 +22696,7 @@ async function syncCloudNow() {
         return;
     }
 
-    if (!cloudSyncState.ready) {
-        await initializeCloudSync(true);
-    }
+    await initializeCloudSync(true);
 
     if ((getCloudSyncConfig().provider || 'supabase') === 'supabase') {
         await pullCloudStateNow();
