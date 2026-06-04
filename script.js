@@ -23094,11 +23094,11 @@ async function pullCloudStateNow(options = {}) {
         }
         return null;
     } finally {
+        cloudSyncState.pulling = false;
         if (!options.silent) {
             cloudSyncState.syncing = false;
-            renderControlCenter();
         }
-        cloudSyncState.pulling = false;
+        renderControlCenter();
     }
 }
 
